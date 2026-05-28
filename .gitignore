@@ -1,0 +1,14 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local model artifacts and experiment outputs
+models/
+outputs/
+runs/
+checkpoints/
+predictions*.jsonl
+metrics*.json
+
+# Keep dataset metadata and curated JSONL splits tracked intentionally.

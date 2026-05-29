@@ -1,0 +1,23 @@
+src/structured_model.py
+  35c42a4a61a33446 9,11,13-20,60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.22",
+  "base_commit_sha": "df4d92507add09c4bcd1b2b209c7b5c662cafdf6",
+  "prompts": {
+    "35c42a4a61a33446": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6c91-0659-7843-a3a2-b7dad54e5c39",
+        "model": "gpt-5.4-mini"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 11,
+      "total_deletions": 8,
+      "accepted_lines": 11,
+      "overriden_lines": 0
+    }
+  }
+}

@@ -14,6 +14,7 @@ from src.structured_drafter import (
 from scripts.train_structured_drafter import build_training_args_kwargs
 from scripts.train_structured_drafter import contiguous_state_dict
 from scripts.predict_structured_drafter import get_model_device
+from scripts.predict_structured_drafter import get_output_logits
 
 
 class StructuredDrafterTests(unittest.TestCase):
@@ -200,6 +201,11 @@ class StructuredDrafterTests(unittest.TestCase):
                 return iter([FakeParam()])
 
         self.assertEqual(get_model_device(FakeModel()), "cuda:0")
+
+    def test_get_output_logits_accepts_dict_outputs(self):
+        logits = {"kind": 1}
+
+        self.assertIs(get_output_logits({"logits": logits}), logits)
 
 
 if __name__ == "__main__":

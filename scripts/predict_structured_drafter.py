@@ -65,6 +65,12 @@ def get_model_device(model: Any):
     return first_param.device
 
 
+def get_output_logits(output: Any):
+    if isinstance(output, dict):
+        return output["logits"]
+    return output.logits
+
+
 def predict_one(model: Any, tokenizer: Any, prompt: str, max_length: int, space, schemas: dict[str, dict[str, Any]]) -> str:
     import torch
 
@@ -73,7 +79,7 @@ def predict_one(model: Any, tokenizer: Any, prompt: str, max_length: int, space,
     encoded = {key: value.to(device) for key, value in encoded.items()}
     with torch.no_grad():
         output = model(**encoded)
-    example = select_ids_from_logits(output.logits)
+    example = select_ids_from_logits(get_output_logits(output))
     return render_prediction(example, space, schemas)
 
 

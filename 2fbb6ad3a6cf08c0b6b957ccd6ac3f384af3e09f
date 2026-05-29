@@ -1,0 +1,27 @@
+README.md
+  35c42a4a61a33446 108-119
+scripts/run_qwen_sft.py
+  35c42a4a61a33446 53-63
+tests/test_run_qwen_sft_script.py
+  35c42a4a61a33446 3,5,7,108-123
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.22",
+  "base_commit_sha": "2fbb6ad3a6cf08c0b6b957ccd6ac3f384af3e09f",
+  "prompts": {
+    "35c42a4a61a33446": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6c91-0659-7843-a3a2-b7dad54e5c39",
+        "model": "gpt-5.5"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 44,
+      "total_deletions": 1,
+      "accepted_lines": 44,
+      "overriden_lines": 0
+    }
+  }
+}

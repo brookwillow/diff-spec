@@ -38,6 +38,9 @@ scripts/
   prepare_diffusion_data.py
   train_diffusion_drafter.py
   predict_diffusion_drafter.py
+  prepare_structured_drafter_data.py
+  train_structured_drafter.py
+  predict_structured_drafter.py
 tests/
 docs/
   paper-draft.md            # 论文初稿
@@ -57,6 +60,7 @@ docs/
 | 8 | 准备 Qwen ms-swift SFT 脚手架 | 已完成 |
 | 9 | 完成 Qwen baseline、消融和延迟评估 | 未开始 |
 | 10 | 构建自训练扩散草稿模型闭环 | 进行中 |
+| 11 | 构建分类-工具-槽位结构化草稿器 | 进行中 |
 
 ## 预期评估
 
@@ -211,3 +215,44 @@ python3 scripts/predict_diffusion_drafter.py \
 ```
 
 这一路线先验证“小模型并行起草 JSON”的可行性；后续可以把 masked baseline 替换为更严格的 discrete diffusion 采样，并接入 Qwen verifier 做混合接受。
+
+## 结构化草稿模型训练
+
+结构化草稿器先预测 `Action/Reject/Clarify`，再预测工具名和槽位，最后由程序按 `data/tools.json` 组装合法 JSON。相比直接生成 JSON 文本，这条路线能避免格式错误，并把失败集中到分类、工具选择和槽位填充。
+
+准备数据和标签空间：
+
+```bash
+python3 scripts/prepare_structured_drafter_data.py \
+  --source-dir data/splits \
+  --tools data/tools.json \
+  --system data/system-prompt.txt \
+  --output data/structured/train.jsonl \
+  --label-space-output data/structured/label_space.json
+```
+
+启动训练：
+
+```bash
+python3 scripts/train_structured_drafter.py \
+  --config configs/structured_drafter.yaml
+```
+
+快速冒烟：
+
+```bash
+python3 scripts/train_structured_drafter.py \
+  --config configs/structured_drafter.yaml \
+  --smoke-steps 2
+```
+
+评估：
+
+```bash
+python3 scripts/predict_structured_drafter.py \
+  --model outputs/structured_drafter \
+  --base-model hfl/chinese-macbert-base \
+  --eval-file data/eval_text/all.jsonl \
+  --output predictions/structured_drafter_eval.jsonl \
+  --summary-output predictions/structured_drafter_eval_metrics.json
+```

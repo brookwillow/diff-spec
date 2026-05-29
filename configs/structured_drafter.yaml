@@ -1,0 +1,20 @@
+model: hfl/chinese-macbert-base
+train_file: data/structured/train.jsonl
+label_space: data/structured/label_space.json
+output_dir: outputs/structured_drafter
+
+max_length: 512
+validation_ratio: 0.02
+seed: 42
+
+num_train_epochs: 5
+per_device_train_batch_size: 16
+per_device_eval_batch_size: 16
+gradient_accumulation_steps: 1
+learning_rate: 0.00005
+warmup_ratio: 0.03
+weight_decay: 0.01
+logging_steps: 20
+eval_steps: 200
+save_steps: 200
+save_total_limit: 2

@@ -78,21 +78,38 @@ def prompt_messages(row: dict[str, Any], system_prompt: str) -> list[dict[str, s
     return [{"role": "system", "content": system_prompt}, {"role": "user", "content": query}]
 
 
-def generate_prediction(model, tokenizer, messages: list[dict[str, str]], args: argparse.Namespace) -> str:
+def build_generation_inputs(model, tokenizer, messages: list[dict[str, str]]) -> dict[str, Any]:
     import torch
 
-    input_ids = tokenizer.apply_chat_template(
+    encoded = tokenizer.apply_chat_template(
         messages,
         tokenize=True,
         add_generation_prompt=True,
         return_tensors="pt",
     )
+    if isinstance(encoded, dict):
+        input_ids = encoded["input_ids"]
+        attention_mask = encoded.get("attention_mask")
+    else:
+        input_ids = encoded
+        attention_mask = None
     input_ids = input_ids.to(model.device)
-    attention_mask = torch.ones_like(input_ids)
+    if attention_mask is None:
+        attention_mask = torch.ones_like(input_ids)
+    else:
+        attention_mask = attention_mask.to(model.device)
+    return {"input_ids": input_ids, "attention_mask": attention_mask}
+
+
+def generate_prediction(model, tokenizer, messages: list[dict[str, str]], args: argparse.Namespace) -> str:
+    import torch
+
+    inputs = build_generation_inputs(model, tokenizer, messages)
+    input_ids = inputs["input_ids"]
     with torch.no_grad():
         output_ids = model.generate(
             input_ids=input_ids,
-            attention_mask=attention_mask,
+            attention_mask=inputs["attention_mask"],
             max_new_tokens=args.max_new_tokens,
             do_sample=args.temperature > 0,
             temperature=args.temperature if args.temperature > 0 else None,

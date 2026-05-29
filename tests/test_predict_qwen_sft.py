@@ -1,6 +1,7 @@
 import unittest
 import sys
 import types
+from collections import UserDict
 from unittest import mock
 
 from scripts.predict_qwen_sft import build_generation_inputs, prompt_messages
@@ -51,7 +52,7 @@ class PredictQwenSftTests(unittest.TestCase):
     def test_build_generation_inputs_accepts_batch_encoding_like_output(self):
         tokenizer = mock.Mock()
         fake = FakeTensor([[1, 2, 3]])
-        tokenizer.apply_chat_template.return_value = {"input_ids": fake}
+        tokenizer.apply_chat_template.return_value = UserDict({"input_ids": fake})
         model = mock.Mock()
         model.device = "cpu"
 

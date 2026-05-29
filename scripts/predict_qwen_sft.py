@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -87,7 +88,7 @@ def build_generation_inputs(model, tokenizer, messages: list[dict[str, str]]) ->
         add_generation_prompt=True,
         return_tensors="pt",
     )
-    if isinstance(encoded, dict):
+    if isinstance(encoded, Mapping):
         input_ids = encoded["input_ids"]
         attention_mask = encoded.get("attention_mask")
     else:

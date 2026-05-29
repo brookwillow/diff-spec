@@ -13,6 +13,7 @@ from src.structured_drafter import (
 )
 from scripts.train_structured_drafter import build_training_args_kwargs
 from scripts.train_structured_drafter import contiguous_state_dict
+from scripts.predict_structured_drafter import get_model_device
 
 
 class StructuredDrafterTests(unittest.TestCase):
@@ -189,6 +190,16 @@ class StructuredDrafterTests(unittest.TestCase):
 
         self.assertIn("weight", state)
         self.assertEqual(state["weight"].calls, ["detach", "cpu", "contiguous"])
+
+    def test_get_model_device_uses_parameter_device_when_model_has_no_device_attr(self):
+        class FakeParam:
+            device = "cuda:0"
+
+        class FakeModel:
+            def parameters(self):
+                return iter([FakeParam()])
+
+        self.assertEqual(get_model_device(FakeModel()), "cuda:0")
 
 
 if __name__ == "__main__":

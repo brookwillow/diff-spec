@@ -54,11 +54,23 @@ def load_model(args: argparse.Namespace, space) -> Any:
     return model
 
 
+def get_model_device(model: Any):
+    device = getattr(model, "device", None)
+    if device is not None:
+        return device
+    try:
+        first_param = next(model.parameters())
+    except (StopIteration, AttributeError, TypeError):
+        return "cpu"
+    return first_param.device
+
+
 def predict_one(model: Any, tokenizer: Any, prompt: str, max_length: int, space, schemas: dict[str, dict[str, Any]]) -> str:
     import torch
 
     encoded = tokenizer(prompt, truncation=True, max_length=max_length, padding="max_length", return_tensors="pt")
-    encoded = {key: value.to(model.device) for key, value in encoded.items()}
+    device = get_model_device(model)
+    encoded = {key: value.to(device) for key, value in encoded.items()}
     with torch.no_grad():
         output = model(**encoded)
     example = select_ids_from_logits(output.logits)

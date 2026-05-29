@@ -1,0 +1,25 @@
+tests/test_structured_drafter.py
+  35c42a4a61a33446 17,205-208
+scripts/predict_structured_drafter.py
+  35c42a4a61a33446 68-73,82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.22",
+  "base_commit_sha": "b6aa38da0f81e3c9a89cf2ee10d06bb15dae8eed",
+  "prompts": {
+    "35c42a4a61a33446": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6c91-0659-7843-a3a2-b7dad54e5c39",
+        "model": "gpt-5.4-mini"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 1,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}

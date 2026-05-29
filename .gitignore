@@ -10,5 +10,6 @@ runs/
 checkpoints/
 predictions*.jsonl
 metrics*.json
+data/diffusion/
 
 # Keep dataset metadata and curated JSONL splits tracked intentionally.

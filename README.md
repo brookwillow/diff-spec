@@ -35,6 +35,9 @@ scripts/
   run_qwen_sft.py
   run_qwen_sft.sh
   validate_dataset.py
+  prepare_diffusion_data.py
+  train_diffusion_drafter.py
+  predict_diffusion_drafter.py
 tests/
 docs/
   paper-draft.md            # 论文初稿
@@ -53,6 +56,7 @@ docs/
 | 7 | 整理 text-only eval 集并接入评估器 | 已完成 |
 | 8 | 准备 Qwen ms-swift SFT 脚手架 | 已完成 |
 | 9 | 完成 Qwen baseline、消融和延迟评估 | 未开始 |
+| 10 | 构建自训练扩散草稿模型闭环 | 进行中 |
 
 ## 预期评估
 
@@ -167,3 +171,43 @@ python3 scripts/evaluate.py \
 
 summary 包含总体 exact match、分类成功率、工具选择成功率、参数填充正确率、schema 合法率和 JSON 格式错误率。
 启动训练时脚本会打印完整 `conda run ... swift sft ...` 命令，并使用 `conda run --no-capture-output` 透传 Swift 实时日志；如果终端长时间没有新日志，通常是在模型下载、加载或 MPS 编译阶段。
+
+## 扩散草稿模型训练
+
+第一版扩散草稿器使用 `AutoModelForMaskedLM` 做 masked-denoising baseline：prompt 作为条件输入，只 mask 并监督最后一个 assistant 输出。默认底座是 `hfl/chinese-macbert-base`，用于先跑通中文工具 JSON 草稿训练闭环。
+
+准备训练数据：
+
+```bash
+python3 scripts/prepare_diffusion_data.py \
+  --source-dir data/splits \
+  --system data/system-prompt.txt \
+  --output data/diffusion/train.jsonl
+```
+
+启动训练：
+
+```bash
+python3 scripts/train_diffusion_drafter.py \
+  --config configs/diffusion_drafter.yaml
+```
+
+快速冒烟：
+
+```bash
+python3 scripts/train_diffusion_drafter.py \
+  --config configs/diffusion_drafter.yaml \
+  --smoke-steps 2
+```
+
+评估扩散草稿器：
+
+```bash
+python3 scripts/predict_diffusion_drafter.py \
+  --model outputs/diffusion_drafter \
+  --eval-file data/eval_text/all.jsonl \
+  --output predictions/diffusion_drafter_eval.jsonl \
+  --summary-output predictions/diffusion_drafter_eval_metrics.json
+```
+
+这一路线先验证“小模型并行起草 JSON”的可行性；后续可以把 masked baseline 替换为更严格的 discrete diffusion 采样，并接入 Qwen verifier 做混合接受。

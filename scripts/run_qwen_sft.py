@@ -50,7 +50,17 @@ def detect_torch_device(conda_env: str) -> str:
         check=False,
     )
     if result.returncode != 0:
-        sys.stderr.write(result.stderr)
+        if "No module named 'torch'" in result.stderr:
+            sys.stderr.write(
+                "PyTorch is not installed in the training environment.\n"
+                f"Install it first, for example:\n"
+                f"  conda run -n {conda_env} pip install torch torchvision torchaudio\n"
+                "For CUDA wheels, use the PyTorch index matching your server CUDA setup, for example:\n"
+                f"  conda run -n {conda_env} pip install torch torchvision torchaudio "
+                "--index-url https://download.pytorch.org/whl/cu121\n"
+            )
+        else:
+            sys.stderr.write(result.stderr)
         raise SystemExit(result.returncode)
 
     device = result.stdout.strip().splitlines()[-1] if result.stdout.strip() else ""

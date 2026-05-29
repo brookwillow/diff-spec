@@ -44,6 +44,14 @@ SWIFT_DEVICE=cpu DRY_RUN=1 python3 scripts/run_qwen_sft.py
 
 `scripts/run_qwen_sft.sh` remains as a thin compatibility wrapper around the Python entrypoint.
 
+## Supervision
+
+The config sets `loss_scale: last_round`, so ms-swift masks system/user tokens and previous assistant turns, then computes loss only on the final assistant response. This matches the verifier objective: given the full prompt and conversation history, predict the current turn's tool JSON, clarification, or rejection.
+
+## Swift Invocation
+
+This baseline intentionally uses the `swift sft` CLI through `scripts/run_qwen_sft.py`. The CLI path is enough for Qwen text-only LoRA because native `loss_scale: last_round` covers final-response supervision. Use the Swift SDK Trainer path only when we move to Qwen2.5-Omni thinker-only training, parameter freezing audits, or custom label-span construction.
+
 The default model is `Qwen/Qwen2.5-1.5B-Instruct`. The SFT config uses `max_length: 4096` and the full prompt at `data/system-prompt.txt`, so each sample includes the tool schema during training. On offline machines, edit `configs/qwen_sft_lora.yaml` and set `model` to a local model path.
 
 ## Evaluation Contract

@@ -105,6 +105,18 @@ python scripts/evaluate.py --gold data/eval_text/all.jsonl --predictions predict
 
 训练入口是 `scripts/run_qwen_sft.py`，默认使用 `configs/qwen_sft_lora.yaml`，并在启动前自动生成 `data/sft/qwen_train.jsonl`。
 
+AutoDL 或新环境先确认 PyTorch 已安装：
+
+```bash
+conda run -n qwen-omni python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
+```
+
+如果缺少 `torch`，先安装 PyTorch。CUDA 服务器可先用 cu121 wheel：
+
+```bash
+conda run -n qwen-omni pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+```
+
 ```bash
 python3 scripts/run_qwen_sft.py
 ```
@@ -129,5 +141,5 @@ SWIFT_DEVICE=cuda python3 scripts/run_qwen_sft.py
 SWIFT_DEVICE=cpu python3 scripts/run_qwen_sft.py
 ```
 
-`scripts/run_qwen_sft.py` 会自动按 CUDA、Apple MPS、CPU 的顺序选择训练设备。Apple Silicon 可用时会使用 `mps:0`，并切换到 `float32` 与 `eager` attention 以提高兼容性。SFT 配置当前使用 `data/system-prompt.txt` 完整提示词，并将 `max_length` 设为 4096 以保留 tool schema 和较长多轮上下文。`scripts/run_qwen_sft.sh` 仅作为兼容入口转发到 Python 脚本。
+`scripts/run_qwen_sft.py` 会自动按 CUDA、Apple MPS、CPU 的顺序选择训练设备。Apple Silicon 可用时会使用 `mps:0`，并切换到 `float32` 与 `eager` attention 以提高兼容性。SFT 配置当前使用 `data/system-prompt.txt` 完整提示词，并将 `max_length` 设为 4096 以保留 tool schema 和较长多轮上下文。`loss_scale: last_round` 只监督最后一个 assistant 输出，历史 assistant 仅作为上下文。当前 Qwen text verifier 训练继续使用 `swift sft` CLI；Omni thinker-only、冻结审计或自定义 label span 需求再切 SDK Trainer。`scripts/run_qwen_sft.sh` 仅作为兼容入口转发到 Python 脚本。
 启动训练时脚本会打印完整 `conda run ... swift sft ...` 命令，并使用 `conda run --no-capture-output` 透传 Swift 实时日志；如果终端长时间没有新日志，通常是在模型下载、加载或 MPS 编译阶段。

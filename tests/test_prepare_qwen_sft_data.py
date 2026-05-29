@@ -94,6 +94,7 @@ class PrepareQwenSftDataTests(unittest.TestCase):
 
         self.assertIn("system: data/system-prompt.txt", config)
         self.assertIn("max_length: 4096", config)
+        self.assertIn("loss_scale: last_round", config)
         prompt = (REPO_ROOT / "data" / "system-prompt.txt").read_text(encoding="utf-8")
         self.assertGreater(len(prompt), 5000)
 

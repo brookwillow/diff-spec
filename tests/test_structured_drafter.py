@@ -11,6 +11,7 @@ from src.structured_drafter import (
     load_label_space,
     render_prediction,
 )
+from scripts.train_structured_drafter import build_training_args_kwargs
 
 
 class StructuredDrafterTests(unittest.TestCase):
@@ -129,6 +130,38 @@ class StructuredDrafterTests(unittest.TestCase):
         self.assertEqual(loaded.id_to_kind[0], "Action")
         self.assertEqual(loaded.id_to_tool[loaded.tool_to_id["ClimateControl"]], "ClimateControl")
         self.assertEqual(loaded.id_to_slot_value["action"][loaded.slot_value_to_id["action"]["打开"]], "打开")
+
+    def test_build_training_args_kwargs_disables_safetensors_saving(self):
+        kwargs = build_training_args_kwargs(
+            {
+                "output_dir": "out",
+                "num_train_epochs": 1,
+                "per_device_train_batch_size": 1,
+                "per_device_eval_batch_size": 1,
+                "gradient_accumulation_steps": 1,
+                "learning_rate": 5e-5,
+                "warmup_ratio": 0.03,
+                "weight_decay": 0.01,
+                "logging_steps": 10,
+                "eval_steps": 10,
+                "save_steps": 10,
+                "save_total_limit": 1,
+                "seed": 42,
+                "bf16": False,
+                "fp16": False,
+                "use_mps_device": False,
+                "remove_unused_columns": False,
+                "eval_strategy": "steps",
+            },
+            has_eval=True,
+            use_cuda=True,
+            use_bf16=False,
+            use_fp16=False,
+            use_mps=False,
+        )
+
+        self.assertIn("save_safetensors", kwargs)
+        self.assertFalse(kwargs["save_safetensors"])
 
 
 if __name__ == "__main__":

@@ -51,6 +51,32 @@ def split_rows(rows: list[dict[str, Any]], validation_ratio: float, seed: int) -
     return shuffled[val_size:], shuffled[:val_size]
 
 
+def build_training_args_kwargs(config: dict[str, Any], has_eval: bool, use_cuda: bool, use_bf16: bool, use_fp16: bool, use_mps: bool) -> dict[str, Any]:
+    return {
+        "output_dir": config["output_dir"],
+        "num_train_epochs": float(config.get("num_train_epochs", 5)),
+        "per_device_train_batch_size": int(config.get("per_device_train_batch_size", 8)),
+        "per_device_eval_batch_size": int(config.get("per_device_eval_batch_size", 8)),
+        "gradient_accumulation_steps": int(config.get("gradient_accumulation_steps", 1)),
+        "learning_rate": float(config.get("learning_rate", 5e-5)),
+        "warmup_ratio": float(config.get("warmup_ratio", 0.03)),
+        "weight_decay": float(config.get("weight_decay", 0.01)),
+        "logging_steps": int(config.get("logging_steps", 20)),
+        "eval_steps": int(config.get("eval_steps", 200)),
+        "save_strategy": "steps",
+        "save_steps": int(config.get("save_steps", 200)),
+        "save_total_limit": int(config.get("save_total_limit", 2)),
+        "report_to": "none",
+        "seed": int(config.get("seed", 42)),
+        "bf16": use_bf16,
+        "fp16": use_fp16,
+        "use_mps_device": use_mps,
+        "remove_unused_columns": False,
+        "save_safetensors": False,
+        "eval_strategy": "steps" if has_eval else "no",
+    }
+
+
 class StructuredDataset:
     def __init__(self, rows: list[dict[str, Any]], tokenizer: Any, max_length: int):
         self.rows = rows
@@ -99,30 +125,12 @@ def main() -> int:
     use_mps = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
     use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
     use_fp16 = use_cuda and not use_bf16
-    train_args_kwargs = {
-        "output_dir": config["output_dir"],
-        "num_train_epochs": float(config.get("num_train_epochs", 5)),
-        "per_device_train_batch_size": int(config.get("per_device_train_batch_size", 8)),
-        "per_device_eval_batch_size": int(config.get("per_device_eval_batch_size", 8)),
-        "gradient_accumulation_steps": int(config.get("gradient_accumulation_steps", 1)),
-        "learning_rate": float(config.get("learning_rate", 5e-5)),
-        "warmup_ratio": float(config.get("warmup_ratio", 0.03)),
-        "weight_decay": float(config.get("weight_decay", 0.01)),
-        "logging_steps": int(config.get("logging_steps", 20)),
-        "eval_steps": int(config.get("eval_steps", 200)),
-        "save_strategy": "steps",
-        "save_steps": int(config.get("save_steps", 200)),
-        "save_total_limit": int(config.get("save_total_limit", 2)),
-        "report_to": "none",
-        "seed": int(config.get("seed", 42)),
-        "bf16": use_bf16,
-        "fp16": use_fp16,
-        "use_mps_device": use_mps,
-        "remove_unused_columns": False,
-    }
+    train_args_kwargs = build_training_args_kwargs(config, eval_dataset is not None, use_cuda, use_bf16, use_fp16, use_mps)
     sig = inspect.signature(TrainingArguments.__init__).parameters
     eval_key = "eval_strategy" if "eval_strategy" in sig else "evaluation_strategy"
-    train_args_kwargs[eval_key] = "steps" if eval_dataset is not None else "no"
+    train_args_kwargs[eval_key] = train_args_kwargs.pop("eval_strategy")
+    if "save_safetensors" not in sig:
+        train_args_kwargs.pop("save_safetensors", None)
     training_args = TrainingArguments(**{k: v for k, v in train_args_kwargs.items() if k in sig})
     if args.smoke_steps > 0:
         training_args.max_steps = args.smoke_steps

@@ -6,15 +6,18 @@ from typing import Any
 def build_structured_model(base_model_name: str, label_sizes: dict[str, int]):
     import torch
     from torch import nn
-    from transformers import AutoModel, PreTrainedModel
-    from transformers.modeling_outputs import SequenceClassifierOutput
+    from transformers import AutoModel
 
-    class StructuredDrafterModel(PreTrainedModel):
+    class StructuredDrafterModel(nn.Module):
         def __init__(self):
-            encoder = AutoModel.from_pretrained(base_model_name, trust_remote_code=True)
-            super().__init__(encoder.config)
-            self.encoder = encoder
-            hidden_size = getattr(encoder.config, "hidden_size")
+            super().__init__()
+            self.encoder = AutoModel.from_pretrained(
+                base_model_name,
+                trust_remote_code=True,
+                attn_implementation="eager",
+            )
+            self.config = self.encoder.config
+            hidden_size = getattr(self.encoder.config, "hidden_size")
             self.kind_head = nn.Linear(hidden_size, label_sizes["kind"])
             self.tool_head = nn.Linear(hidden_size, label_sizes["tool"])
             self.slot_heads = nn.ModuleDict(
@@ -54,6 +57,6 @@ def build_structured_model(base_model_name: str, label_sizes: dict[str, int]):
                     losses.append(self.loss_fn(logits[name], label))
             if losses:
                 loss = torch.stack(losses).mean()
-            return SequenceClassifierOutput(loss=loss, logits=logits)
+            return {"loss": loss, "logits": logits}
 
     return StructuredDrafterModel()

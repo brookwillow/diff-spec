@@ -77,6 +77,13 @@ def build_training_args_kwargs(config: dict[str, Any], has_eval: bool, use_cuda:
     }
 
 
+def contiguous_state_dict(model: Any) -> dict[str, Any]:
+    state = {}
+    for name, tensor in model.state_dict().items():
+        state[name] = tensor.detach().cpu().contiguous()
+    return state
+
+
 class StructuredDataset:
     def __init__(self, rows: list[dict[str, Any]], tokenizer: Any, max_length: int):
         self.rows = rows
@@ -112,6 +119,14 @@ def main() -> int:
     import torch
     from transformers import AutoTokenizer, Trainer, TrainingArguments
 
+    class SafeSavingTrainer(Trainer):
+        def save_model(self, output_dir: str | None = None, _internal_call: bool = False):
+            output_dir = output_dir or self.args.output_dir
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            torch.save(contiguous_state_dict(self.model), Path(output_dir) / "pytorch_model.bin")
+            if getattr(self.model, "config", None) is not None and hasattr(self.model.config, "save_pretrained"):
+                self.model.config.save_pretrained(output_dir)
+
     rows = load_jsonl(config["train_file"])
     train_rows, eval_rows = split_rows(rows, float(config.get("validation_ratio", 0.02)), int(config.get("seed", 42)))
     space = load_label_space(config["label_space"])
@@ -135,7 +150,7 @@ def main() -> int:
     if args.smoke_steps > 0:
         training_args.max_steps = args.smoke_steps
 
-    trainer = Trainer(model=model, args=training_args, train_dataset=train_dataset, eval_dataset=eval_dataset)
+    trainer = SafeSavingTrainer(model=model, args=training_args, train_dataset=train_dataset, eval_dataset=eval_dataset)
     print(
         json.dumps(
             {

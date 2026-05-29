@@ -12,6 +12,7 @@ from src.structured_drafter import (
     render_prediction,
 )
 from scripts.train_structured_drafter import build_training_args_kwargs
+from scripts.train_structured_drafter import contiguous_state_dict
 
 
 class StructuredDrafterTests(unittest.TestCase):
@@ -162,6 +163,32 @@ class StructuredDrafterTests(unittest.TestCase):
 
         self.assertIn("save_safetensors", kwargs)
         self.assertFalse(kwargs["save_safetensors"])
+
+    def test_contiguous_state_dict_makes_tensor_like_values_contiguous(self):
+        class FakeTensor:
+            def __init__(self):
+                self.calls = []
+
+            def detach(self):
+                self.calls.append("detach")
+                return self
+
+            def cpu(self):
+                self.calls.append("cpu")
+                return self
+
+            def contiguous(self):
+                self.calls.append("contiguous")
+                return self
+
+        class FakeModel:
+            def state_dict(self):
+                return {"weight": FakeTensor()}
+
+        state = contiguous_state_dict(FakeModel())
+
+        self.assertIn("weight", state)
+        self.assertEqual(state["weight"].calls, ["detach", "cpu", "contiguous"])
 
 
 if __name__ == "__main__":

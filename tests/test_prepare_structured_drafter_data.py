@@ -26,10 +26,6 @@ class PrepareStructuredDrafterDataTests(unittest.TestCase):
                 json.dumps(
                     {
                         "id": "app_001",
-                        "expected_type": "Action",
-                        "expected_tool_calls": [
-                            {"name": "AppControl", "arguments": {"action": "打开", "feature": "导航地图"}}
-                        ],
                         "messages": [
                             {"role": "user", "content": "打开导航地图"},
                             {

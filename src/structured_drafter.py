@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from src.evaluation import expected_output, parse_assistant_output
+
 
 SLOT_NAMES = ("action", "device", "feature", "position", "value", "query", "index", "contact", "phone")
 KIND_NAMES = ("Action", "Reject", "Clarify")
@@ -43,7 +45,8 @@ def build_label_space(schemas: dict[str, dict[str, Any]], rows: list[dict[str, A
             enum = properties.get(slot, {}).get("enum", [])
             values[slot].update(str(item) for item in enum if isinstance(item, str))
     for row in rows or []:
-        for call in row.get("expected_tool_calls") or []:
+        parsed = parse_assistant_output(_row_target(row))
+        for call in parsed.tool_calls:
             args = call.get("arguments") if isinstance(call, dict) else None
             if not isinstance(args, dict):
                 continue
@@ -60,6 +63,16 @@ def build_label_space(schemas: dict[str, dict[str, Any]], rows: list[dict[str, A
         slot: {index: value for value, index in mapping.items()} for slot, mapping in slot_value_to_id.items()
     }
     return StructuredLabelSpace(kind_to_id, id_to_kind, tool_to_id, id_to_tool, slot_value_to_id, id_to_slot_value)
+
+
+def _row_target(row: dict[str, Any]) -> str:
+    if isinstance(row.get("target"), str) and row["target"]:
+        return row["target"]
+    if isinstance(row.get("content"), str) and row["content"]:
+        return row["content"]
+    if isinstance(row.get("assistant_output"), str) and row["assistant_output"]:
+        return row["assistant_output"]
+    return expected_output(row)
 
 
 def load_label_space(path: str | Path) -> StructuredLabelSpace:
@@ -81,16 +94,18 @@ def load_label_space(path: str | Path) -> StructuredLabelSpace:
 
 
 def labels_from_row(row: dict[str, Any], space: StructuredLabelSpace) -> StructuredExample:
-    kind = row.get("expected_type") if row.get("expected_type") in KIND_NAMES else _infer_kind(row)
+    target = _row_target(row)
+    kind = row.get("expected_type") if row.get("expected_type") in KIND_NAMES else _infer_kind(target)
     tool_name = NONE_VALUE
     arguments: dict[str, Any] = {}
-    calls = row.get("expected_tool_calls")
-    if kind == "Action" and isinstance(calls, list) and calls:
-        first = calls[0]
-        if isinstance(first, dict):
-            tool_name = str(first.get("name") or NONE_VALUE)
-            if isinstance(first.get("arguments"), dict):
-                arguments = first["arguments"]
+    if kind == "Action":
+        parsed = parse_assistant_output(target)
+        if parsed.tool_calls:
+            first = parsed.tool_calls[0]
+            if isinstance(first, dict):
+                tool_name = str(first.get("name") or NONE_VALUE)
+                if isinstance(first.get("arguments"), dict):
+                    arguments = first["arguments"]
 
     slot_ids = {}
     for slot in SLOT_NAMES:
@@ -163,8 +178,12 @@ def select_ids_from_logits(logits: dict[str, Any]) -> StructuredExample:
     )
 
 
-def _infer_kind(row: dict[str, Any]) -> str:
-    calls = row.get("expected_tool_calls")
-    if isinstance(calls, list) and calls:
+def _infer_kind(target: str) -> str:
+    parsed = parse_assistant_output(target)
+    if parsed.tool_calls:
         return "Action"
-    return "Reject"
+    if parsed.raw == "Reject":
+        return "Reject"
+    if parsed.kind.name == "TEXT":
+        return "Clarify"
+    return "Clarify"

@@ -55,12 +55,12 @@ class StructuredDrafterTests(unittest.TestCase):
 
     def test_labels_from_action_row_extracts_tool_and_slots(self):
         row = {
-            "expected_type": "Action",
-            "expected_tool_calls": [
+            "messages": [
+                {"role": "user", "content": "把空调打开"},
                 {
-                    "name": "ClimateControl",
-                    "arguments": {"action": "打开", "device": "空调", "feature": "温度"},
-                }
+                    "role": "assistant",
+                    "content": '{"name":"ClimateControl","arguments":{"action":"打开","device":"空调","feature":"温度"}}',
+                },
             ],
         }
 

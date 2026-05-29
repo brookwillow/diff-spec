@@ -68,6 +68,64 @@ class EvaluationSummary:
 
 
 @dataclass(frozen=True)
+class DetailedEvaluationSummary:
+    total: int
+    classification_correct: int
+    exact_matches: int
+    schema_valid: int
+    invalid_json: int
+    wrong_kind: int
+    action_rows: int
+    tool_selection_correct: int
+    parameter_fill_correct: int
+    by_expected_type: dict[str, dict[str, int]]
+
+    @property
+    def classification_accuracy(self) -> float:
+        return self.classification_correct / self.total if self.total else 0.0
+
+    @property
+    def exact_match_rate(self) -> float:
+        return self.exact_matches / self.total if self.total else 0.0
+
+    @property
+    def schema_valid_rate(self) -> float:
+        return self.schema_valid / self.total if self.total else 0.0
+
+    @property
+    def json_format_error_rate(self) -> float:
+        return self.invalid_json / self.total if self.total else 0.0
+
+    @property
+    def tool_selection_accuracy(self) -> float:
+        return self.tool_selection_correct / self.action_rows if self.action_rows else 0.0
+
+    @property
+    def parameter_fill_accuracy(self) -> float:
+        return self.parameter_fill_correct / self.action_rows if self.action_rows else 0.0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "total": self.total,
+            "classification_correct": self.classification_correct,
+            "classification_accuracy": self.classification_accuracy,
+            "exact_matches": self.exact_matches,
+            "exact_match_rate": self.exact_match_rate,
+            "schema_valid": self.schema_valid,
+            "schema_valid_rate": self.schema_valid_rate,
+            "invalid_json": self.invalid_json,
+            "json_format_error_rate": self.json_format_error_rate,
+            "wrong_kind": self.wrong_kind,
+            "action_rows": self.action_rows,
+            "tool_selection_correct": self.tool_selection_correct,
+            "tool_selection_accuracy": self.tool_selection_accuracy,
+            "parameter_fill_correct": self.parameter_fill_correct,
+            "parameter_fill_accuracy": self.parameter_fill_accuracy,
+            "by_expected_type": self.by_expected_type,
+        }
+
+
+@dataclass(frozen=True)
 class DatasetValidationSummary:
     files: int
     total: int
@@ -278,6 +336,85 @@ class Evaluator:
             wrong_kind=wrong_kind,
         )
 
+    def evaluate_rows_detailed(
+        self,
+        gold_rows: list[dict[str, Any]],
+        prediction_rows: list[dict[str, Any]],
+    ) -> DetailedEvaluationSummary:
+        if len(gold_rows) != len(prediction_rows):
+            raise ValueError(
+                f"gold/prediction row count mismatch: {len(gold_rows)} != {len(prediction_rows)}"
+            )
+
+        classification_correct = 0
+        exact_matches = 0
+        schema_valid = 0
+        invalid_json = 0
+        wrong_kind = 0
+        action_rows = 0
+        tool_selection_correct = 0
+        parameter_fill_correct = 0
+        by_expected_type: dict[str, dict[str, int]] = {}
+
+        for gold, prediction in zip(gold_rows, prediction_rows):
+            score = self.score_row(gold, prediction)
+            expected_type = _expected_class(gold)
+            predicted_type = _predicted_class(prediction_output(prediction))
+            bucket = by_expected_type.setdefault(
+                expected_type,
+                {"total": 0, "classification_correct": 0, "exact_matches": 0, "invalid_json": 0},
+            )
+            bucket["total"] += 1
+
+            is_classification_correct = expected_type == predicted_type
+            classification_correct += int(is_classification_correct)
+            bucket["classification_correct"] += int(is_classification_correct)
+
+            exact_matches += int(score.exact_match)
+            bucket["exact_matches"] += int(score.exact_match)
+            schema_valid += int(score.schema_valid)
+            invalid = int(score.predicted_kind == OutputKind.INVALID_JSON)
+            invalid_json += invalid
+            bucket["invalid_json"] += invalid
+            wrong_kind += int(score.expected_kind != score.predicted_kind)
+
+            expected_calls = _expected_tool_calls(gold)
+            if expected_type == "Action":
+                action_rows += 1
+                predicted = parse_assistant_output(prediction_output(prediction))
+                tool_ok = (
+                    predicted.kind == OutputKind.TOOL_CALLS
+                    and _tool_names(expected_calls) == _tool_names(predicted.tool_calls)
+                )
+                tool_selection_correct += int(tool_ok)
+                parameter_fill_correct += int(tool_ok and _arguments_list(expected_calls) == _arguments_list(predicted.tool_calls))
+
+        return DetailedEvaluationSummary(
+            total=len(gold_rows),
+            classification_correct=classification_correct,
+            exact_matches=exact_matches,
+            schema_valid=schema_valid,
+            invalid_json=invalid_json,
+            wrong_kind=wrong_kind,
+            action_rows=action_rows,
+            tool_selection_correct=tool_selection_correct,
+            parameter_fill_correct=parameter_fill_correct,
+            by_expected_type=by_expected_type,
+        )
+
+    def evaluate_files_detailed(
+        self,
+        gold_path: str | Path,
+        prediction_path: str | Path,
+        limit: int | None = None,
+    ) -> DetailedEvaluationSummary:
+        gold_rows = load_jsonl(gold_path)
+        prediction_rows = load_jsonl(prediction_path)
+        if limit is not None:
+            gold_rows = gold_rows[:limit]
+            prediction_rows = prediction_rows[:limit]
+        return self.evaluate_rows_detailed(gold_rows, prediction_rows)
+
     def validate_dataset(self, paths: list[Path]) -> DatasetValidationSummary:
         total = 0
         schema_valid = 0
@@ -333,3 +470,47 @@ def _allows_freeform_value(enum: list[Any], value: str) -> bool:
     if any(isinstance(item, str) and item.startswith("<") and item.endswith(">") for item in enum):
         return True
     return bool(re.fullmatch(r"\d+(\.\d+)?%?", value))
+
+
+def _expected_tool_calls(row: dict[str, Any]) -> list[dict[str, Any]]:
+    if isinstance(row.get("expected_tool_calls"), list):
+        return row["expected_tool_calls"]
+    parsed = parse_assistant_output(expected_output(row))
+    return parsed.tool_calls if parsed.kind == OutputKind.TOOL_CALLS else []
+
+
+def _expected_class(row: dict[str, Any]) -> str:
+    expected_type = row.get("expected_type")
+    if expected_type == "Action":
+        return "Action"
+    if expected_type == "Reject":
+        return "Reject"
+    if expected_type == "Clarify":
+        return "Clarify"
+    parsed = parse_assistant_output(expected_output(row))
+    if parsed.kind == OutputKind.TOOL_CALLS:
+        return "Action"
+    if parsed.kind == OutputKind.REJECT:
+        return "Reject"
+    if parsed.kind == OutputKind.TEXT:
+        return "Clarify"
+    return "Invalid"
+
+
+def _predicted_class(output: str) -> str:
+    parsed = parse_assistant_output(output)
+    if parsed.kind == OutputKind.TOOL_CALLS:
+        return "Action"
+    if parsed.kind == OutputKind.REJECT:
+        return "Reject"
+    if parsed.kind == OutputKind.TEXT:
+        return "Clarify"
+    return "Invalid"
+
+
+def _tool_names(calls: list[dict[str, Any]]) -> list[str | None]:
+    return [call.get("name") for call in calls]
+
+
+def _arguments_list(calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [call.get("arguments") if isinstance(call.get("arguments"), dict) else {} for call in calls]

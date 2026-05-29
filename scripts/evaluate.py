@@ -18,10 +18,14 @@ def main() -> int:
     parser.add_argument("--tools", default="data/tools.json", help="Tool schema JSON file.")
     parser.add_argument("--limit", type=int, default=None, help="Optional row limit.")
     parser.add_argument("--output", default=None, help="Optional path for JSON summary.")
+    parser.add_argument("--basic", action="store_true", help="Only emit the legacy basic summary.")
     args = parser.parse_args()
 
     evaluator = Evaluator(load_tool_schemas(args.tools))
-    summary = evaluator.evaluate_files(args.gold, args.predictions, limit=args.limit)
+    if args.basic:
+        summary = evaluator.evaluate_files(args.gold, args.predictions, limit=args.limit)
+    else:
+        summary = evaluator.evaluate_files_detailed(args.gold, args.predictions, limit=args.limit)
     payload = summary.as_dict()
     text = json.dumps(payload, ensure_ascii=False, indent=2)
     print(text)

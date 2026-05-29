@@ -56,6 +56,17 @@ The default model is `Qwen/Qwen2.5-1.5B-Instruct`. The SFT config uses `max_leng
 
 ## Evaluation Contract
 
+Generate predictions with the trained LoRA adapter:
+
+```bash
+python3 scripts/predict_qwen_sft.py \
+  --model Qwen/Qwen2.5-1.5B-Instruct \
+  --adapter outputs/qwen2_5_1_5b_tool_lora/<run>/checkpoint-<step> \
+  --eval-file data/eval_text/all.jsonl \
+  --output predictions/qwen_sft_eval.jsonl \
+  --summary-output predictions/qwen_sft_eval_metrics.json
+```
+
 After inference, write one prediction per line:
 
 ```json
@@ -70,3 +81,5 @@ python3 scripts/evaluate.py \
   --predictions predictions.jsonl \
   --tools data/tools.json
 ```
+
+Detailed metrics include classification accuracy, tool selection accuracy, parameter fill accuracy, JSON format error rate, schema validity, and exact match.

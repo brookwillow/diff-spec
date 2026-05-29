@@ -90,6 +90,39 @@ class EvaluationTests(unittest.TestCase):
         self.assertEqual(summary.exact_match_rate, 1.0)
         self.assertEqual(summary.schema_valid_rate, 1.0)
 
+    def test_detailed_summary_tracks_class_tool_param_and_json_errors(self):
+        gold_rows = [
+            {
+                "expected_type": "Action",
+                "expected_tool_calls": [
+                    {"name": "ClimateControl", "arguments": {"action": "打开", "device": "空调"}}
+                ],
+            },
+            {
+                "expected_type": "Action",
+                "expected_tool_calls": [
+                    {"name": "WindowControl", "arguments": {"action": "打开", "device": "车窗"}}
+                ],
+            },
+            {"expected_type": "Reject", "expected_tool_calls": []},
+            {"expected_type": "Clarify", "expected_tool_calls": []},
+        ]
+        predictions = [
+            {"prediction": '{"name":"ClimateControl","arguments":{"action":"打开","device":"空调"}}'},
+            {"prediction": '{"name":"WindowControl","arguments":{"action":"关闭","device":"车窗"}}'},
+            {"prediction": '{"name":"Reject"'},
+            {"prediction": "您要调哪个位置？"},
+        ]
+
+        summary = self.evaluator.evaluate_rows_detailed(gold_rows, predictions).as_dict()
+
+        self.assertEqual(summary["total"], 4)
+        self.assertEqual(summary["classification_accuracy"], 0.75)
+        self.assertEqual(summary["json_format_error_rate"], 0.25)
+        self.assertEqual(summary["action_rows"], 2)
+        self.assertEqual(summary["tool_selection_accuracy"], 1.0)
+        self.assertEqual(summary["parameter_fill_accuracy"], 0.5)
+
     def test_validate_dataset_accepts_gold_text_reject_and_tools(self):
         paths = [
             ROOT / "data" / "splits" / "by_tool" / "ClimateControl.jsonl",

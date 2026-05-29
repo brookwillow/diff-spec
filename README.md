@@ -142,4 +142,28 @@ SWIFT_DEVICE=cpu python3 scripts/run_qwen_sft.py
 ```
 
 `scripts/run_qwen_sft.py` 会自动按 CUDA、Apple MPS、CPU 的顺序选择训练设备。Apple Silicon 可用时会使用 `mps:0`，并切换到 `float32` 与 `eager` attention 以提高兼容性。SFT 配置当前使用 `data/system-prompt.txt` 完整提示词，并将 `max_length` 设为 4096 以保留 tool schema 和较长多轮上下文。`loss_scale: last_round` 只监督最后一个 assistant 输出，历史 assistant 仅作为上下文。当前 Qwen text verifier 训练继续使用 `swift sft` CLI；Omni thinker-only、冻结审计或自定义 label span 需求再切 SDK Trainer。`scripts/run_qwen_sft.sh` 仅作为兼容入口转发到 Python 脚本。
+
+## 训练后评估
+
+训练完成后，用 base model 加 LoRA adapter 对 `data/eval_text/all.jsonl` 生成预测并自动输出详细指标：
+
+```bash
+python3 scripts/predict_qwen_sft.py \
+  --model Qwen/Qwen2.5-1.5B-Instruct \
+  --adapter outputs/qwen2_5_1_5b_tool_lora/<run>/checkpoint-<step> \
+  --eval-file data/eval_text/all.jsonl \
+  --output predictions/qwen_sft_eval.jsonl \
+  --summary-output predictions/qwen_sft_eval_metrics.json
+```
+
+如果已经有预测文件，可单独评估：
+
+```bash
+python3 scripts/evaluate.py \
+  --gold data/eval_text/all.jsonl \
+  --predictions predictions/qwen_sft_eval.jsonl \
+  --tools data/tools.json
+```
+
+summary 包含总体 exact match、分类成功率、工具选择成功率、参数填充正确率、schema 合法率和 JSON 格式错误率。
 启动训练时脚本会打印完整 `conda run ... swift sft ...` 命令，并使用 `conda run --no-capture-output` 透传 Swift 实时日志；如果终端长时间没有新日志，通常是在模型下载、加载或 MPS 编译阶段。

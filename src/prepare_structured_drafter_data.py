@@ -7,8 +7,21 @@ from typing import Any
 
 from src.evaluation import load_jsonl
 from src.prepare_diffusion_data import render_prompt
-from src.prepare_qwen_sft_data import is_trainable_messages, write_jsonl
+from src.prepare_qwen_sft_data import write_jsonl
 from src.structured_drafter import StructuredLabelSpace, build_label_space, labels_from_row
+
+
+def _is_usable_messages(messages: Any) -> bool:
+    """Like is_trainable_messages but allows 'tool' role for multi-turn tool-call dialogues."""
+    if not isinstance(messages, list) or len(messages) < 2:
+        return False
+    if any(not isinstance(m, dict) for m in messages):
+        return False
+    if messages[-1].get("role") != "assistant":
+        return False
+    if not any(m.get("role") == "user" for m in messages[:-1]):
+        return False
+    return all(isinstance(m.get("content"), str) and m["content"] for m in messages)
 
 
 def collect_structured_rows(
@@ -21,7 +34,7 @@ def collect_structured_rows(
     for path in paths:
         for row in load_jsonl(path):
             messages = row.get("messages")
-            if not is_trainable_messages(messages):
+            if not _is_usable_messages(messages):
                 continue
             key = json.dumps(row.get("messages"), ensure_ascii=False, sort_keys=True)
             if key in seen:

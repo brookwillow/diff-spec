@@ -1,0 +1,23 @@
+src/prepare_structured_drafter_data.py
+  7166589d2399bc43 10,14-26,37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.22",
+  "base_commit_sha": "22ec6b479f0dfb2a806e00cf18b24b6650fb18ad",
+  "prompts": {
+    "7166589d2399bc43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74e5f4b8-7202-4784-bb6c-6d08cc5f51fd",
+        "model": "claude-sonnet-4.6"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 15,
+      "total_deletions": 2,
+      "accepted_lines": 15,
+      "overriden_lines": 0
+    }
+  }
+}

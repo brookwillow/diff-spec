@@ -111,10 +111,10 @@ AutoDL 或新环境先确认 PyTorch 已安装：
 conda run -n qwen-omni python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
 ```
 
-如果缺少 `torch`，先安装 PyTorch。CUDA 服务器可先用 cu121 wheel：
+如果缺少 `torch`，先安装 PyTorch。RTX 50 系列/Blackwell CUDA 服务器优先使用较新的 CUDA wheel：
 
 ```bash
-conda run -n qwen-omni pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+conda run -n qwen-omni pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
 ```
 
 ```bash

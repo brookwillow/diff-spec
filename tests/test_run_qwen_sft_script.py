@@ -121,6 +121,7 @@ class RunQwenSftScriptTest(unittest.TestCase):
         self.assertEqual(context.exception.code, 1)
         self.assertIn("PyTorch is not installed", captured.getvalue())
         self.assertIn("conda run -n qwen-omni pip install torch torchvision torchaudio", captured.getvalue())
+        self.assertIn("https://download.pytorch.org/whl/cu128", captured.getvalue())
 
 
 if __name__ == "__main__":

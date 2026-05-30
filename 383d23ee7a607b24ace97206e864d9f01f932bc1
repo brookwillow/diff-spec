@@ -1,0 +1,36 @@
+scripts/serve_comparison.py
+  b94ed25e5702c261 189-190,196,202,219,227,297,303,362-364,367-370,373-374,377
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.22",
+  "base_commit_sha": "383d23ee7a607b24ace97206e864d9f01f932bc1",
+  "prompts": {
+    "7166589d2399bc43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74e5f4b8-7202-4784-bb6c-6d08cc5f51fd",
+        "model": "claude-sonnet-4.6"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    },
+    "b94ed25e5702c261": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "157e200a-46bf-4227-8f4a-f241a0e0bb88",
+        "model": "copilot/claude-opus-4.6"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 20,
+      "total_deletions": 42,
+      "accepted_lines": 20,
+      "overriden_lines": 0
+    }
+  }
+}

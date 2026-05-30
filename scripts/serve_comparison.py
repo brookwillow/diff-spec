@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--system", default="data/system-prompt.txt")
     parser.add_argument("--tools", default="data/tools.json")
     parser.add_argument("--port", type=int, default=7860)
+    parser.add_argument("--server-name", default="0.0.0.0", help="Bind address. Use 0.0.0.0 for LAN access.")
     parser.add_argument("--share", action="store_true")
     return parser.parse_args()
 
@@ -294,7 +295,7 @@ def build_app(args):
 def main() -> int:
     args = parse_args()
     app = build_app(args)
-    app.launch(server_port=args.port, share=args.share)
+    app.launch(server_name=args.server_name, server_port=args.port, share=args.share)
     return 0
 
 

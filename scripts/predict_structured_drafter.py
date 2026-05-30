@@ -71,7 +71,7 @@ def get_output_logits(output: Any):
     return output.logits
 
 
-def predict_one(model: Any, tokenizer: Any, prompt: str, max_length: int, space, schemas: dict[str, dict[str, Any]]) -> str:
+def predict_one(model: Any, tokenizer: Any, prompt: str, max_length: int, space, schemas: dict[str, dict[str, Any]], verbose: bool = False) -> str:
     import torch
 
     encoded = tokenizer(prompt, truncation=True, max_length=max_length, padding="max_length", return_tensors="pt")
@@ -79,7 +79,13 @@ def predict_one(model: Any, tokenizer: Any, prompt: str, max_length: int, space,
     encoded = {key: value.to(device) for key, value in encoded.items()}
     with torch.no_grad():
         output = model(**encoded)
-    example = select_ids_from_logits(get_output_logits(output))
+    logits = get_output_logits(output)
+    example = select_ids_from_logits(logits)
+    if verbose:
+        kind_name = space.id_to_kind.get(example.kind_id, "?")
+        tool_name = space.id_to_tool.get(example.tool_id, "?")
+        kind_probs = torch.softmax(logits["kind"], dim=-1)[0].tolist()
+        print(f"  [debug] kind={example.kind_id}({kind_name}) probs={[f'{p:.3f}' for p in kind_probs]} tool={example.tool_id}({tool_name})", flush=True)
     return render_prediction(example, space, schemas)
 
 
@@ -104,7 +110,8 @@ def write_predictions(args: argparse.Namespace) -> None:
             if not isinstance(messages, list):
                 messages = [{"role": "user", "content": str(row.get("query", ""))}]
             prompt = render_structured_prompt(messages)
-            prediction = predict_one(model, tokenizer, prompt, args.max_length, space, schemas)
+            verbose = index <= 5  # Log first 5 predictions for debugging
+            prediction = predict_one(model, tokenizer, prompt, args.max_length, space, schemas, verbose=verbose)
             handle.write(
                 json.dumps({"id": row.get("id"), "prediction": prediction}, ensure_ascii=False, separators=(",", ":"))
                 + "\n"

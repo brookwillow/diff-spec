@@ -24,6 +24,7 @@ def build_structured_model(base_model_name: str, label_sizes: dict[str, int]):
                 {name: nn.Linear(hidden_size, size) for name, size in label_sizes.items() if name not in {"kind", "tool"}}
             )
             self.loss_fn = nn.CrossEntropyLoss()
+            self.loss_fn_masked = nn.CrossEntropyLoss(reduction="none")
 
         def forward(
             self,
@@ -46,17 +47,26 @@ def build_structured_model(base_model_name: str, label_sizes: dict[str, int]):
             logits.update({name: head(pooled) for name, head in self.slot_heads.items()})
 
             loss = None
-            losses = []
             if kind_labels is not None:
-                losses.append(self.loss_fn(logits["kind"], kind_labels))
-            if tool_labels is not None:
-                losses.append(self.loss_fn(logits["tool"], tool_labels))
-            for name in self.slot_heads:
-                label = slot_labels.get(f"{name}_labels")
-                if label is not None:
-                    losses.append(self.loss_fn(logits[name], label))
-            if losses:
-                loss = torch.stack(losses).mean()
+                kind_loss = self.loss_fn(logits["kind"], kind_labels)
+                # Only compute tool/slot loss for Action samples (kind_id == 0)
+                action_mask = (kind_labels == 0).float()
+                num_action = action_mask.sum().clamp_min(1)
+
+                tool_slot_losses = []
+                if tool_labels is not None:
+                    per_sample = self.loss_fn_masked(logits["tool"], tool_labels)
+                    tool_slot_losses.append((per_sample * action_mask).sum() / num_action)
+                for name in self.slot_heads:
+                    label = slot_labels.get(f"{name}_labels")
+                    if label is not None:
+                        per_sample = self.loss_fn_masked(logits[name], label)
+                        tool_slot_losses.append((per_sample * action_mask).sum() / num_action)
+
+                if tool_slot_losses:
+                    loss = kind_loss + torch.stack(tool_slot_losses).mean()
+                else:
+                    loss = kind_loss
             return {"loss": loss, "logits": logits}
 
     return StructuredDrafterModel()

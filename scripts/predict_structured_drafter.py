@@ -10,7 +10,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.evaluation import Evaluator, load_jsonl, load_tool_schemas
-from src.prepare_diffusion_data import render_prompt
+from src.prepare_structured_drafter_data import render_structured_prompt
 from src.structured_drafter import load_label_space, render_prediction, select_ids_from_logits
 
 
@@ -90,7 +90,6 @@ def write_predictions(args: argparse.Namespace) -> None:
     rows = load_jsonl(args.eval_file)
     if args.limit is not None:
         rows = rows[: args.limit]
-    system_prompt = Path(args.system).read_text(encoding="utf-8")
     schemas = load_tool_schemas(args.tools)
     label_space_path = args.label_space or str(Path(args.model) / "label_space.json")
     space = load_label_space(label_space_path)
@@ -104,7 +103,7 @@ def write_predictions(args: argparse.Namespace) -> None:
             messages = row.get("messages")
             if not isinstance(messages, list):
                 messages = [{"role": "user", "content": str(row.get("query", ""))}]
-            prompt = render_prompt(messages, system_prompt)
+            prompt = render_structured_prompt(messages)
             prediction = predict_one(model, tokenizer, prompt, args.max_length, space, schemas)
             handle.write(
                 json.dumps({"id": row.get("id"), "prediction": prediction}, ensure_ascii=False, separators=(",", ":"))

@@ -43,7 +43,8 @@ class PrepareStructuredDrafterDataTests(unittest.TestCase):
             rows, space = collect_structured_rows([source], schemas, "SYSTEM")
 
         self.assertEqual(len(rows), 1)
-        self.assertIn("System:\nSYSTEM", rows[0]["prompt"])
+        self.assertIn("User:\n打开导航地图", rows[0]["prompt"])
+        self.assertNotIn("System:", rows[0]["prompt"])
         self.assertEqual(rows[0]["kind_id"], space.kind_to_id["Action"])
         self.assertEqual(rows[0]["tool_id"], space.tool_to_id["AppControl"])
         self.assertEqual(rows[0]["slot_ids"]["action"], space.slot_value_to_id["action"]["打开"])

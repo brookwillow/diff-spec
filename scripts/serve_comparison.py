@@ -14,7 +14,6 @@ import argparse
 import json
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -187,38 +186,20 @@ def _build_messages(query: str, history: list[list[str]]) -> list[dict[str, str]
 def infer_speculative(
     query: str,
     history: list[list[str]],
-    sd_model,
-    sd_tokenizer,
-    sd_space,
-    schemas,
-    sd_max_length: int,
+    draft_text: str,
+    draft_ms: float,
     qwen_model,
     qwen_tokenizer,
     system_prompt: str,
     max_new_tokens: int,
 ) -> dict[str, Any]:
-    """Speculative decoding: BERT drafts, Qwen verifies token-by-token."""
+    """Speculative decoding: verify a pre-computed BERT draft with Qwen."""
     import torch
     from collections.abc import Mapping
-    from src.prepare_structured_drafter_data import render_structured_prompt
-    from src.structured_drafter import render_prediction, select_ids_from_logits
 
     t0 = time.perf_counter()
 
-    # Step 1: BERT structured drafter produces a draft
-    messages = _build_messages(query, history)
-    prompt = render_structured_prompt(messages)
-    encoded = sd_tokenizer(prompt, truncation=True, max_length=sd_max_length, padding="max_length", return_tensors="pt")
-    device_sd = next(sd_model.parameters()).device
-    encoded = {k: v.to(device_sd) for k, v in encoded.items()}
-    with torch.no_grad():
-        sd_output = sd_model(**encoded)
-    logits = sd_output["logits"] if isinstance(sd_output, dict) else sd_output.logits
-    example = select_ids_from_logits(logits)
-    draft_text = render_prediction(example, sd_space, schemas)
-    draft_time_ms = (time.perf_counter() - t0) * 1000
-
-    # Step 2: Build Qwen prompt (same as infer_qwen)
+    # Step 1: Build Qwen prompt
     qwen_messages = [{"role": "system", "content": system_prompt}]
     for user_msg, assistant_msg in history:
         qwen_messages.append({"role": "user", "content": user_msg})
@@ -235,16 +216,15 @@ def infer_speculative(
     prompt_ids = prompt_ids.to(qwen_model.device)
     prompt_len = prompt_ids.shape[1]
 
-    # Step 3: Tokenize the draft and append to prompt
+    # Step 2: Tokenize the draft and append to prompt
     draft_token_ids = qwen_tokenizer.encode(draft_text, add_special_tokens=False)
     if not draft_token_ids:
-        # Empty draft, fall back to pure AR
         draft_token_ids = []
 
     draft_tensor = torch.tensor([draft_token_ids], device=qwen_model.device)
     input_with_draft = torch.cat([prompt_ids, draft_tensor], dim=1)
 
-    # Step 4: Single Qwen forward pass to verify all draft tokens
+    # Step 3: Single Qwen forward pass to verify all draft tokens
     t_verify = time.perf_counter()
     with torch.no_grad():
         outputs = qwen_model(input_ids=input_with_draft)
@@ -314,13 +294,13 @@ def infer_speculative(
         final_prediction = qwen_tokenizer.decode(generated, skip_special_tokens=True).strip()
         accept_status = "rejected"
 
-    total_ms = (time.perf_counter() - t0) * 1000
+    total_ms = (time.perf_counter() - t0) * 1000 + draft_ms
 
     return {
         "prediction": final_prediction,
         "latency_ms": round(total_ms, 1),
         "draft_text": draft_text,
-        "draft_ms": round(draft_time_ms, 1),
+        "draft_ms": round(draft_ms, 1),
         "verify_ms": round(verify_time_ms, 1),
         "accepted_tokens": accepted_tokens,
         "draft_tokens": n_draft,
@@ -375,30 +355,28 @@ def build_app(args):
 
     print("Models loaded. Starting server...")
 
-    executor = ThreadPoolExecutor(max_workers=2)
-
     def predict(query: str, history: list[list[str]]):
         if not query.strip():
             return "", "", ""
 
-        # Run structured drafter and Qwen AR concurrently
-        sd_future = executor.submit(
-            infer_structured, query, history,
-            sd_model, sd_tokenizer, sd_space, schemas, args.structured_max_length,
-        )
-        qwen_future = executor.submit(
-            infer_qwen, query, history,
-            qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens,
-        )
-        # Run speculative decoding (needs both models, runs sequentially)
-        spec_result = infer_speculative(
+        # Step 1: Run structured drafter (fast, ~15ms)
+        sd_result = infer_structured(
             query, history,
             sd_model, sd_tokenizer, sd_space, schemas, args.structured_max_length,
+        )
+
+        # Step 2: Run Qwen AR and speculative decoding sequentially (no GPU contention)
+        qwen_result = infer_qwen(
+            query, history,
             qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens,
         )
 
-        sd_result = sd_future.result()
-        qwen_result = qwen_future.result()
+        # Step 3: Speculative decoding reuses the draft from step 1
+        spec_result = infer_speculative(
+            query, history,
+            sd_result["prediction"], sd_result["latency_ms"],
+            qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens,
+        )
 
         sd_out = _format_output(sd_result, "Structured Drafter (BERT)")
         qwen_out = _format_output(qwen_result, "Qwen AR (自回归)")

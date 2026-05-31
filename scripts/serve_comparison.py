@@ -424,7 +424,7 @@ def build_app(args):
 
     def predict(query: str, history: list[list[str]]):
         if not query.strip():
-            return ("", "", "", "") if use_diffusion else ("", "", "")
+            return ("", "", "", "", "") if use_diffusion else ("", "", "")
 
         print(f"\n{'='*60}", flush=True)
         print(f"[Query] {query}", flush=True)
@@ -455,29 +455,42 @@ def build_app(args):
         print(f"  [Qwen AR] {qwen_result['latency_ms']:.1f}ms", flush=True)
         print(f"    output: {qwen_result['prediction'][:150]}", flush=True)
 
-        # Step 4: Speculative decoding reuses the draft from step 1
+        # Step 4: Speculative decoding (Structured → Qwen)
         spec_result = infer_speculative(
             query, history,
             sd_result["prediction"], sd_result["latency_ms"],
             qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens,
         )
-        print(f"  [Speculative] {spec_result['latency_ms']:.1f}ms | {spec_result['accept_status']} ({spec_result['accepted_tokens']}/{spec_result['draft_tokens']} tokens)", flush=True)
+        print(f"  [Structured-Spec] {spec_result['latency_ms']:.1f}ms | {spec_result['accept_status']} ({spec_result['accepted_tokens']}/{spec_result['draft_tokens']} tokens)", flush=True)
         print(f"    draft : {spec_result['draft_text'][:150]}", flush=True)
         print(f"    output: {spec_result['prediction'][:150]}", flush=True)
+
+        # Step 5: Diffusion Speculative (Diffusion → Qwen)
+        if use_diffusion:
+            diff_spec_result = infer_speculative(
+                query, history,
+                diff_result["prediction"], diff_result["latency_ms"],
+                qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens,
+            )
+            print(f"  [Diffusion-Spec] {diff_spec_result['latency_ms']:.1f}ms | {diff_spec_result['accept_status']} ({diff_spec_result['accepted_tokens']}/{diff_spec_result['draft_tokens']} tokens)", flush=True)
+            print(f"    draft : {diff_spec_result['draft_text'][:150]}", flush=True)
+            print(f"    output: {diff_spec_result['prediction'][:150]}", flush=True)
+
         print("=" * 60, flush=True)
 
         sd_out = _format_output(sd_result, "Structured Drafter (BERT)")
         qwen_out = _format_output(qwen_result, "Qwen AR (自回归)")
-        spec_out = _format_output(spec_result, "Speculative Decoding (BERT→Qwen)")
+        spec_out = _format_output(spec_result, "Structured Spec (BERT→Qwen)")
         if use_diffusion:
             diff_out = _format_output(diff_result, "Diffusion Drafter (BERT)")
-            return sd_out, diff_out, qwen_out, spec_out
+            diff_spec_out = _format_output(diff_spec_result, "Diffusion Spec (Diff→Qwen)")
+            return sd_out, diff_out, qwen_out, spec_out, diff_spec_out
         return sd_out, qwen_out, spec_out
 
     with gr.Blocks(title="Automotive Tool-Call Comparison") as app:
         if use_diffusion:
-            gr.Markdown("# 🚗 四模式对比: Structured / Diffusion / Qwen AR / Speculative")
-            gr.Markdown("输入车载指令，对比四种推理模式的预测结果和延迟。")
+            gr.Markdown("# 🚗 五模式对比: Structured / Diffusion / Qwen AR / Structured-Spec / Diffusion-Spec")
+            gr.Markdown("输入车载指令，对比五种推理模式的预测结果和延迟。")
         else:
             gr.Markdown("# 🚗 三模式对比: Structured Drafter / Qwen AR / Speculative Decoding")
             gr.Markdown("输入车载指令，对比三种推理模式的预测结果和延迟。")
@@ -498,8 +511,10 @@ def build_app(args):
             with gr.Row():
                 sd_output = gr.Markdown(label="Structured Drafter")
                 diff_output = gr.Markdown(label="Diffusion Drafter")
+            with gr.Row():
                 qwen_output = gr.Markdown(label="Qwen AR")
-                spec_output = gr.Markdown(label="Speculative Decoding")
+                spec_output = gr.Markdown(label="Structured Spec (BERT→Qwen)")
+                diff_spec_output = gr.Markdown(label="Diffusion Spec (Diff→Qwen)")
         else:
             with gr.Row():
                 sd_output = gr.Markdown(label="Structured Drafter")
@@ -511,26 +526,26 @@ def build_app(args):
 
         if use_diffusion:
             def on_submit(query, history):
-                sd_out, diff_out, qwen_out, spec_out = predict(query, history)
+                sd_out, diff_out, qwen_out, spec_out, diff_spec_out = predict(query, history)
                 new_history = history + [[query, ""]]
-                return sd_out, diff_out, qwen_out, spec_out, new_history, new_history, ""
+                return sd_out, diff_out, qwen_out, spec_out, diff_spec_out, new_history, new_history, ""
 
             def on_clear():
-                return "", "", "", "", [], [], ""
+                return "", "", "", "", "", [], [], ""
 
             submit_btn.click(
                 on_submit,
                 inputs=[query_input, chatbot_history],
-                outputs=[sd_output, diff_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+                outputs=[sd_output, diff_output, qwen_output, spec_output, diff_spec_output, chatbot_history, history_display, query_input],
             )
             query_input.submit(
                 on_submit,
                 inputs=[query_input, chatbot_history],
-                outputs=[sd_output, diff_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+                outputs=[sd_output, diff_output, qwen_output, spec_output, diff_spec_output, chatbot_history, history_display, query_input],
             )
             clear_btn.click(
                 on_clear,
-                outputs=[sd_output, diff_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+                outputs=[sd_output, diff_output, qwen_output, spec_output, diff_spec_output, chatbot_history, history_display, query_input],
             )
         else:
             def on_submit(query, history):

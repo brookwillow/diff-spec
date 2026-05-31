@@ -111,15 +111,21 @@ def trim_decoded_prediction(text: str) -> str:
     return cleaned
 
 
-def restore_tool_case(prediction: str, schemas: list[dict]) -> str:
+def restore_tool_case(prediction: str, schemas: dict | list) -> str:
     """Restore PascalCase tool names that BERT's lowercase tokenizer destroyed.
 
     Builds a lowercase→original mapping from tool schemas and replaces
     occurrences in the prediction string.
     """
     case_map: dict[str, str] = {}
-    for tool in schemas:
-        name = tool.get("name") or tool.get("function", {}).get("name", "")
+    if isinstance(schemas, dict):
+        names = list(schemas.keys())
+    else:
+        names = [
+            (t.get("name") or t.get("function", {}).get("name", "")) if isinstance(t, dict) else str(t)
+            for t in schemas
+        ]
+    for name in names:
         if name:
             case_map[name.lower()] = name
     for lower, original in sorted(case_map.items(), key=lambda x: -len(x[0])):

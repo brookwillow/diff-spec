@@ -330,7 +330,8 @@ def main() -> int:
     # Write prediction files
     pred_dir = Path("predictions")
     pred_dir.mkdir(parents=True, exist_ok=True)
-    for name, preds in [("structured", sd_preds), ("qwen_ar", qwen_preds), ("speculative", spec_preds)]:
+    mode_names = [("structured_drafter", sd_preds), ("qwen_ar", qwen_preds), ("speculative", spec_preds)]
+    for name, preds in mode_names:
         path = pred_dir / f"benchmark_{name}.jsonl"
         with path.open("w", encoding="utf-8") as fh:
             for row, pred in zip(rows, preds):
@@ -339,7 +340,7 @@ def main() -> int:
     # Evaluate accuracy
     evaluator = Evaluator(schemas)
     results = {}
-    for name, preds in [("structured_drafter", sd_preds), ("qwen_ar", qwen_preds), ("speculative", spec_preds)]:
+    for name, _ in mode_names:
         path = pred_dir / f"benchmark_{name}.jsonl"
         summary = evaluator.evaluate_files_detailed(args.eval_file, str(path), limit=args.limit).as_dict()
         results[name] = summary

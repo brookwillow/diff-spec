@@ -26,14 +26,22 @@ def build_masked_example(tokenizer: Any, prompt: str, target: str, config: Maske
     target_ids = tokenizer.encode(target, add_special_tokens=False)[: config.max_target_tokens]
     if not target_ids:
         raise ValueError("target must produce at least one token")
-    supervised_ids = [*target_ids, sep_id]
 
-    prompt_budget = config.max_length - len(supervised_ids) - 3
+    # Fixed mask count matching inference (max_target_tokens + 1).
+    # Extra positions beyond the actual target get label=-100 so the model
+    # learns to emit [SEP] at the correct position and ignores the rest.
+    fixed_mask_count = config.max_target_tokens + 1
+    supervised_ids = [*target_ids, sep_id]
+    supervised_ids = supervised_ids[:fixed_mask_count]
+    if len(supervised_ids) < fixed_mask_count:
+        supervised_ids = supervised_ids + [-100] * (fixed_mask_count - len(supervised_ids))
+
+    prompt_budget = config.max_length - fixed_mask_count - 3
     if prompt_budget < 1:
         raise ValueError("max_length is too small for the configured target span")
 
     prompt_ids = tokenizer.encode(prompt, add_special_tokens=False)[-prompt_budget:]
-    input_ids = [cls_id, *prompt_ids, sep_id, *([mask_id] * len(supervised_ids)), sep_id]
+    input_ids = [cls_id, *prompt_ids, sep_id, *([mask_id] * fixed_mask_count), sep_id]
     labels = [-100] * (len(prompt_ids) + 2) + supervised_ids + [-100]
     attention_mask = [1] * len(input_ids)
 

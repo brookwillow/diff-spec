@@ -21,9 +21,10 @@ class DiffusionDrafterTests(unittest.TestCase):
 
         example = build_masked_example(tokenizer, "用户:打开空调\n", "OK", config)
 
-        self.assertEqual(example["input_ids"][-8:], [102, 103, 103, 103, 102, 0, 0, 0])
+        # fixed_mask_count = max_target_tokens + 1 = 5 masks
+        self.assertEqual(example["input_ids"][-8:], [102, 103, 103, 103, 103, 103, 102, 0])
         self.assertEqual(example["labels"][-8:], [-100, ord("O"), ord("K"), 102, -100, -100, -100, -100])
-        self.assertEqual(example["attention_mask"][-3:], [0, 0, 0])
+        self.assertEqual(example["attention_mask"][-3:], [1, 1, 0])
 
     def test_build_masked_example_truncates_prompt_from_left(self):
         tokenizer = FakeTokenizer()

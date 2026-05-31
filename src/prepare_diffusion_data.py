@@ -56,6 +56,26 @@ def _row_kind(row: dict[str, Any], target: str) -> str:
     return "Clarify"
 
 
+def render_diffusion_prompt(messages: list[dict[str, Any]]) -> str:
+    """Render conversation turns only (no system prompt) for the diffusion drafter.
+
+    Same rationale as the structured drafter: the BERT encoder has limited
+    tokens and the system prompt provides no discriminative signal for a model
+    that learns generation patterns from training data.
+    """
+    prompt_messages = [m for m in messages if isinstance(m, dict) and m.get("role") != "system"]
+    if prompt_messages and prompt_messages[-1].get("role") == "assistant":
+        prompt_messages = prompt_messages[:-1]
+    rendered: list[str] = []
+    for message in prompt_messages:
+        role = ROLE_LABELS.get(str(message.get("role")))
+        content = message.get("content")
+        if role is None or not isinstance(content, str):
+            continue
+        rendered.append(f"{role}:\n{content.strip()}")
+    return "\n\n".join(rendered) if rendered else ""
+
+
 def collect_diffusion_rows(paths: list[Path], system_prompt: str) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -67,7 +87,7 @@ def collect_diffusion_rows(paths: list[Path], system_prompt: str) -> list[dict[s
             target = expected_output(row)
             normalized = {
                 "id": row.get("id"),
-                "prompt": render_prompt(messages, system_prompt),
+                "prompt": render_diffusion_prompt(messages),
                 "target": target,
                 "kind": _row_kind(row, target),
                 "tool_name": _tool_name(target),

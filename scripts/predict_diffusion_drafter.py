@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.diffusion_drafter import MaskedDrafterConfig, build_prediction_inputs, trim_decoded_prediction
 from src.evaluation import Evaluator, load_jsonl, load_tool_schemas
-from src.prepare_diffusion_data import render_prompt
+from src.prepare_diffusion_data import render_diffusion_prompt
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,7 +84,7 @@ def write_predictions(args: argparse.Namespace) -> None:
             messages = row.get("messages")
             if not isinstance(messages, list):
                 messages = [{"role": "user", "content": str(row.get("query", ""))}]
-            prompt = render_prompt(messages, system_prompt)
+            prompt = render_diffusion_prompt(messages)
             prediction = predict_one(model, tokenizer, prompt, config)
             handle.write(
                 json.dumps({"id": row.get("id"), "prediction": prediction}, ensure_ascii=False, separators=(",", ":"))

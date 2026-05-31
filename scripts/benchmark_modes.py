@@ -38,6 +38,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--structured-model", default="outputs/structured_drafter")
     parser.add_argument("--structured-base", default="hfl/chinese-macbert-base")
     parser.add_argument("--structured-max-length", type=int, default=512)
+    parser.add_argument("--diffusion-model", default="outputs/diffusion_drafter")
     parser.add_argument("--qwen-model", default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--qwen-adapter", default=None)
     parser.add_argument("--qwen-max-new-tokens", type=int, default=128)
@@ -48,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output", default="outputs/benchmark_results.json")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--warmup", type=int, default=3, help="Warmup iterations before timing.")
+    parser.add_argument("--no-diffusion", action="store_true", help="Skip diffusion drafter.")
     return parser.parse_args()
 
 
@@ -101,6 +103,27 @@ def load_qwen_model(args):
     return model, tokenizer
 
 
+def load_diffusion_drafter(args):
+    import json as json_mod
+    import torch
+    from transformers import AutoModelForMaskedLM, AutoTokenizer
+    from src.diffusion_drafter import MaskedDrafterConfig
+
+    model_dir = Path(args.diffusion_model)
+    tokenizer = AutoTokenizer.from_pretrained(str(model_dir), trust_remote_code=True)
+    model = AutoModelForMaskedLM.from_pretrained(str(model_dir), trust_remote_code=True)
+    config_path = model_dir / "drafter_config.json"
+    if config_path.exists():
+        payload = json_mod.loads(config_path.read_text(encoding="utf-8"))
+        config = MaskedDrafterConfig(**payload)
+    else:
+        config = MaskedDrafterConfig()
+    if torch.cuda.is_available():
+        model = model.to("cuda")
+    model.eval()
+    return model, tokenizer, config
+
+
 # ---------------------------------------------------------------------------
 # Inference functions
 # ---------------------------------------------------------------------------
@@ -120,6 +143,30 @@ def predict_structured(row, sd_model, sd_tokenizer, sd_space, schemas, max_lengt
     logits = output["logits"] if isinstance(output, dict) else output.logits
     example = select_ids_from_logits(logits)
     prediction = render_prediction(example, sd_space, schemas)
+    elapsed = (time.perf_counter() - t0) * 1000
+    return prediction, elapsed
+
+
+def predict_diffusion(row, diff_model, diff_tokenizer, diff_config):
+    import torch
+    from src.diffusion_drafter import build_prediction_inputs, trim_decoded_prediction
+    from src.prepare_diffusion_data import render_diffusion_prompt
+
+    messages = row.get("messages", [{"role": "user", "content": row.get("query", "")}])
+    prompt = render_diffusion_prompt(messages)
+
+    t0 = time.perf_counter()
+    encoded = build_prediction_inputs(diff_tokenizer, prompt, diff_config)
+    device = next(diff_model.parameters()).device
+    input_ids = torch.tensor([encoded["input_ids"]], dtype=torch.long, device=device)
+    attention_mask = torch.tensor([encoded["attention_mask"]], dtype=torch.long, device=device)
+    mask_positions = encoded["mask_positions"]
+
+    with torch.no_grad():
+        logits = diff_model(input_ids=input_ids, attention_mask=attention_mask).logits[0]
+    predicted_ids = logits[mask_positions].argmax(dim=-1).detach().cpu().tolist()
+    text = diff_tokenizer.decode(predicted_ids, skip_special_tokens=False)
+    prediction = trim_decoded_prediction(text)
     elapsed = (time.perf_counter() - t0) * 1000
     return prediction, elapsed
 
@@ -286,6 +333,12 @@ def main() -> int:
     schemas = load_tool_schemas(args.tools)
     system_prompt = Path(args.system).read_text(encoding="utf-8")
 
+    use_diffusion = not args.no_diffusion
+    if use_diffusion:
+        diff_model, diff_tokenizer, diff_config = load_diffusion_drafter(args)
+    else:
+        diff_model = diff_tokenizer = diff_config = None
+
     rows = load_jsonl(args.eval_file)
     if args.limit is not None:
         rows = rows[:args.limit]
@@ -300,8 +353,8 @@ def main() -> int:
             predict_qwen(rows[0], qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens)
 
     # Collect predictions and latencies
-    sd_preds, qwen_preds, spec_preds = [], [], []
-    sd_times, qwen_times, spec_times = [], [], []
+    sd_preds, qwen_preds, spec_preds, diff_preds = [], [], [], []
+    sd_times, qwen_times, spec_times, diff_times = [], [], [], []
     spec_details: list[dict] = []
 
     for i, row in enumerate(rows, 1):
@@ -315,6 +368,12 @@ def main() -> int:
         qwen_preds.append(pred_qwen)
         qwen_times.append(t_qwen)
 
+        # Diffusion Drafter
+        if use_diffusion:
+            pred_diff, t_diff = predict_diffusion(row, diff_model, diff_tokenizer, diff_config, schemas)
+            diff_preds.append(pred_diff)
+            diff_times.append(t_diff)
+
         # Speculative Decoding
         pred_spec, t_spec, detail = predict_speculative(
             row, sd_model, sd_tokenizer, sd_space, schemas, args.structured_max_length,
@@ -325,12 +384,15 @@ def main() -> int:
         spec_details.append(detail)
 
         if i % 20 == 0 or i == total:
-            print(f"  [{i}/{total}] SD={t_sd:.0f}ms  Qwen={t_qwen:.0f}ms  Spec={t_spec:.0f}ms ({detail['accept_status']})", flush=True)
+            diff_str = f"  Diff={t_diff:.0f}ms" if use_diffusion else ""
+            print(f"  [{i}/{total}] SD={t_sd:.0f}ms  Qwen={t_qwen:.0f}ms  Spec={t_spec:.0f}ms ({detail['accept_status']}){diff_str}", flush=True)
 
     # Write prediction files
     pred_dir = Path("predictions")
     pred_dir.mkdir(parents=True, exist_ok=True)
     mode_names = [("structured_drafter", sd_preds), ("qwen_ar", qwen_preds), ("speculative", spec_preds)]
+    if use_diffusion:
+        mode_names.append(("diffusion_drafter", diff_preds))
     for name, preds in mode_names:
         path = pred_dir / f"benchmark_{name}.jsonl"
         with path.open("w", encoding="utf-8") as fh:
@@ -416,30 +478,67 @@ def main() -> int:
         },
     }
 
+    if use_diffusion:
+        report["modes"]["diffusion_drafter"] = {
+            "accuracy": {
+                "exact_match_rate": results["diffusion_drafter"]["exact_match_rate"],
+                "classification_accuracy": results["diffusion_drafter"]["classification_accuracy"],
+                "tool_selection_accuracy": results["diffusion_drafter"].get("tool_selection_accuracy", 0),
+                "parameter_fill_accuracy": results["diffusion_drafter"].get("parameter_fill_accuracy", 0),
+                "schema_valid_rate": results["diffusion_drafter"]["schema_valid_rate"],
+            },
+            "latency": latency_stats(diff_times),
+        }
+        report["speedup"]["diff_vs_qwen"] = round(np.mean(qwen_times) / np.mean(diff_times), 2) if np.mean(diff_times) > 0 else 0
+
     # Print summary table
     print("\n" + "=" * 80)
     print(f"{'BENCHMARK RESULTS':^80}")
     print("=" * 80)
-    print(f"{'Metric':<30} {'Structured':<16} {'Qwen AR':<16} {'Speculative':<16}")
-    print("-" * 80)
-    for metric in ["exact_match_rate", "classification_accuracy", "tool_selection_accuracy", "parameter_fill_accuracy", "schema_valid_rate"]:
-        sd_v = report["modes"]["structured_drafter"]["accuracy"][metric]
-        qwen_v = report["modes"]["qwen_ar"]["accuracy"][metric]
-        spec_v = report["modes"]["speculative"]["accuracy"][metric]
-        print(f"{metric:<30} {sd_v:<16.4f} {qwen_v:<16.4f} {spec_v:<16.4f}")
-    print("-" * 80)
-    for metric in ["mean_ms", "p50_ms", "p90_ms", "p99_ms"]:
-        sd_v = report["modes"]["structured_drafter"]["latency"][metric]
-        qwen_v = report["modes"]["qwen_ar"]["latency"][metric]
-        spec_v = report["modes"]["speculative"]["latency"][metric]
-        print(f"{metric:<30} {sd_v:<16.1f} {qwen_v:<16.1f} {spec_v:<16.1f}")
-    print("-" * 80)
-    ss = report["modes"]["speculative"]["speculative_stats"]
-    print(f"{'Spec: fully accepted':<30} {'':<16} {'':<16} {ss['fully_accepted_rate']:.1%} ({ss['fully_accepted']}/{total})")
-    print(f"{'Spec: token accept rate':<30} {'':<16} {'':<16} {ss['token_accept_rate']:.1%}")
-    print(f"{'Spec: avg tokens accepted':<30} {'':<16} {'':<16} {ss['avg_accepted_tokens']:.1f}/{ss['avg_draft_tokens']:.1f}")
-    print("-" * 80)
-    print(f"{'Speedup vs Qwen AR':<30} {report['speedup']['sd_vs_qwen']:.1f}x{'':<11} {'1.0x':<16} {report['speedup']['spec_vs_qwen']:.1f}x")
+    if use_diffusion:
+        print(f"{'Metric':<30} {'Structured':<16} {'Qwen AR':<16} {'Speculative':<16} {'Diffusion':<16}")
+        print("-" * 96)
+        for metric in ["exact_match_rate", "classification_accuracy", "tool_selection_accuracy", "parameter_fill_accuracy", "schema_valid_rate"]:
+            sd_v = report["modes"]["structured_drafter"]["accuracy"][metric]
+            qwen_v = report["modes"]["qwen_ar"]["accuracy"][metric]
+            spec_v = report["modes"]["speculative"]["accuracy"][metric]
+            diff_v = report["modes"]["diffusion_drafter"]["accuracy"][metric]
+            print(f"{metric:<30} {sd_v:<16.4f} {qwen_v:<16.4f} {spec_v:<16.4f} {diff_v:<16.4f}")
+        print("-" * 96)
+        for metric in ["mean_ms", "p50_ms", "p90_ms", "p99_ms"]:
+            sd_v = report["modes"]["structured_drafter"]["latency"][metric]
+            qwen_v = report["modes"]["qwen_ar"]["latency"][metric]
+            spec_v = report["modes"]["speculative"]["latency"][metric]
+            diff_v = report["modes"]["diffusion_drafter"]["latency"][metric]
+            print(f"{metric:<30} {sd_v:<16.1f} {qwen_v:<16.1f} {spec_v:<16.1f} {diff_v:<16.1f}")
+        print("-" * 96)
+        ss = report["modes"]["speculative"]["speculative_stats"]
+        print(f"{'Spec: fully accepted':<30} {'':<16} {'':<16} {ss['fully_accepted_rate']:.1%} ({ss['fully_accepted']}/{total})")
+        print(f"{'Spec: token accept rate':<30} {'':<16} {'':<16} {ss['token_accept_rate']:.1%}")
+        print(f"{'Spec: avg tokens accepted':<30} {'':<16} {'':<16} {ss['avg_accepted_tokens']:.1f}/{ss['avg_draft_tokens']:.1f}")
+        print("-" * 96)
+        print(f"{'Speedup vs Qwen AR':<30} {report['speedup']['sd_vs_qwen']:.1f}x{'':<11} {'1.0x':<16} {report['speedup']['spec_vs_qwen']:.1f}x{'':<11} {report['speedup']['diff_vs_qwen']:.1f}x")
+    else:
+        print(f"{'Metric':<30} {'Structured':<16} {'Qwen AR':<16} {'Speculative':<16}")
+        print("-" * 80)
+        for metric in ["exact_match_rate", "classification_accuracy", "tool_selection_accuracy", "parameter_fill_accuracy", "schema_valid_rate"]:
+            sd_v = report["modes"]["structured_drafter"]["accuracy"][metric]
+            qwen_v = report["modes"]["qwen_ar"]["accuracy"][metric]
+            spec_v = report["modes"]["speculative"]["accuracy"][metric]
+            print(f"{metric:<30} {sd_v:<16.4f} {qwen_v:<16.4f} {spec_v:<16.4f}")
+        print("-" * 80)
+        for metric in ["mean_ms", "p50_ms", "p90_ms", "p99_ms"]:
+            sd_v = report["modes"]["structured_drafter"]["latency"][metric]
+            qwen_v = report["modes"]["qwen_ar"]["latency"][metric]
+            spec_v = report["modes"]["speculative"]["latency"][metric]
+            print(f"{metric:<30} {sd_v:<16.1f} {qwen_v:<16.1f} {spec_v:<16.1f}")
+        print("-" * 80)
+        ss = report["modes"]["speculative"]["speculative_stats"]
+        print(f"{'Spec: fully accepted':<30} {'':<16} {'':<16} {ss['fully_accepted_rate']:.1%} ({ss['fully_accepted']}/{total})")
+        print(f"{'Spec: token accept rate':<30} {'':<16} {'':<16} {ss['token_accept_rate']:.1%}")
+        print(f"{'Spec: avg tokens accepted':<30} {'':<16} {'':<16} {ss['avg_accepted_tokens']:.1f}/{ss['avg_draft_tokens']:.1f}")
+        print("-" * 80)
+        print(f"{'Speedup vs Qwen AR':<30} {report['speedup']['sd_vs_qwen']:.1f}x{'':<11} {'1.0x':<16} {report['speedup']['spec_vs_qwen']:.1f}x")
     print("=" * 80)
 
     # Save

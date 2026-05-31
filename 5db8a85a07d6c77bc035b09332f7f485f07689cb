@@ -1,0 +1,38 @@
+tests/test_diffusion_drafter.py
+  f4655b44de69879e 24-25,27
+src/diffusion_drafter.py
+  f4655b44de69879e 29-33,35-37,39,44
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.22",
+  "base_commit_sha": "5db8a85a07d6c77bc035b09332f7f485f07689cb",
+  "prompts": {
+    "7166589d2399bc43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74e5f4b8-7202-4784-bb6c-6d08cc5f51fd",
+        "model": "claude-sonnet-4.6"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    },
+    "f4655b44de69879e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d63617f-499f-4db0-93d0-74b5968b6fa9",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 13,
+      "total_deletions": 4,
+      "accepted_lines": 13,
+      "overriden_lines": 0
+    }
+  }
+}

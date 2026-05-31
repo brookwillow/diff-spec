@@ -256,3 +256,63 @@ python3 scripts/predict_structured_drafter.py \
   --output predictions/structured_drafter_eval.jsonl \
   --summary-output predictions/structured_drafter_eval_metrics.json
 ```
+
+## 多模式对比推理
+
+项目支持 4 种推理模式的横向对比（Structured Drafter / Diffusion Drafter / Qwen AR / Speculative Decoding）。所有脚本默认使用本地已训练好的模型，不会重新下载。
+
+### 本地模型路径
+
+| 模型 | 路径 | 说明 |
+| --- | --- | --- |
+| Structured Drafter | `outputs/structured_drafter` | BERT 多头分类模型 |
+| Diffusion Drafter | `outputs/diffusion_drafter` | BERT masked 扩散模型 |
+| Qwen base | `Qwen/Qwen2.5-1.5B-Instruct` | HuggingFace cache 自动读取 |
+| Qwen LoRA adapter | `outputs/qwen2_5_1_5b_tool_lora` | LoRA 微调权重 |
+
+### Gradio 对比服务
+
+启动 4 模式对比 Web UI（需要先训练好 diffusion 模型）：
+
+```bash
+python3 scripts/serve_comparison.py \
+  --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
+  --port 7860
+```
+
+跳过 diffusion（仅 3 模式）：
+
+```bash
+python3 scripts/serve_comparison.py \
+  --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
+  --no-diffusion
+```
+
+### 批量 Benchmark
+
+在整个评估集上跑 4 模式并输出对比报告：
+
+```bash
+python3 scripts/benchmark_modes.py \
+  --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
+  --eval-file data/eval_text/all.jsonl \
+  --output outputs/benchmark_results.json
+```
+
+仅跑前 100 条快速验证：
+
+```bash
+python3 scripts/benchmark_modes.py \
+  --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
+  --limit 100
+```
+
+跳过 diffusion 模式：
+
+```bash
+python3 scripts/benchmark_modes.py \
+  --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
+  --no-diffusion
+```
+
+> **注意**: `--qwen-model` 默认值为 `Qwen/Qwen2.5-1.5B-Instruct`，会从 HuggingFace 本地 cache（`~/.cache/huggingface/hub`）加载，不会重新下载。`--qwen-adapter` 指定 LoRA 权重目录即可。

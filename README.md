@@ -276,6 +276,7 @@ python3 scripts/predict_structured_drafter.py \
 
 ```bash
 python3 scripts/serve_comparison.py \
+  --qwen-model Qwen/Qwen2.5-1.5B-Instruct \
   --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
   --port 7860
 ```
@@ -284,6 +285,7 @@ python3 scripts/serve_comparison.py \
 
 ```bash
 python3 scripts/serve_comparison.py \
+  --qwen-model Qwen/Qwen2.5-1.5B-Instruct \
   --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
   --no-diffusion
 ```
@@ -294,6 +296,7 @@ python3 scripts/serve_comparison.py \
 
 ```bash
 python3 scripts/benchmark_modes.py \
+  --qwen-model Qwen/Qwen2.5-1.5B-Instruct \
   --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
   --eval-file data/eval_text/all.jsonl \
   --output outputs/benchmark_results.json
@@ -303,6 +306,7 @@ python3 scripts/benchmark_modes.py \
 
 ```bash
 python3 scripts/benchmark_modes.py \
+  --qwen-model Qwen/Qwen2.5-1.5B-Instruct \
   --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
   --limit 100
 ```
@@ -311,6 +315,7 @@ python3 scripts/benchmark_modes.py \
 
 ```bash
 python3 scripts/benchmark_modes.py \
+  --qwen-model Qwen/Qwen2.5-1.5B-Instruct \
   --qwen-adapter outputs/qwen2_5_1_5b_tool_lora \
   --no-diffusion
 ```

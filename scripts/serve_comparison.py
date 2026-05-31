@@ -226,10 +226,16 @@ def infer_diffusion(query: str, history: list[list[str]], model, tokenizer, conf
     with torch.no_grad():
         logits = model(input_ids=input_ids, attention_mask=attention_mask).logits[0]
     predicted_ids = logits[mask_positions].argmax(dim=-1).detach().cpu().tolist()
-    text = tokenizer.decode(predicted_ids, skip_special_tokens=False)
-    prediction = trim_decoded_prediction(text)
-    prediction = restore_tool_case(prediction, schemas)
+    raw_text = tokenizer.decode(predicted_ids, skip_special_tokens=False)
+    trimmed = trim_decoded_prediction(raw_text)
+    prediction = restore_tool_case(trimmed, schemas)
     elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    print(f"  [Diffusion] {elapsed_ms:.1f}ms", flush=True)
+    print(f"    raw decode : {raw_text[:200]}", flush=True)
+    print(f"    trimmed    : {trimmed[:200]}", flush=True)
+    if trimmed != prediction:
+        print(f"    case fixed : {prediction[:200]}", flush=True)
 
     return {
         "prediction": prediction,
@@ -420,11 +426,19 @@ def build_app(args):
         if not query.strip():
             return ("", "", "", "") if use_diffusion else ("", "", "")
 
+        print(f"\n{'='*60}", flush=True)
+        print(f"[Query] {query}", flush=True)
+        if history:
+            print(f"[History] {len(history)} turns", flush=True)
+        print("-" * 60, flush=True)
+
         # Step 1: Run structured drafter (fast, ~15ms)
         sd_result = infer_structured(
             query, history,
             sd_model, sd_tokenizer, sd_space, schemas, args.structured_max_length,
         )
+        print(f"  [Structured] {sd_result['latency_ms']:.1f}ms | kind={sd_result['kind']}({sd_result['kind_prob']:.1%}) tool={sd_result['tool']}({sd_result['tool_prob']:.1%})", flush=True)
+        print(f"    output: {sd_result['prediction'][:150]}", flush=True)
 
         # Step 2: Run diffusion drafter if available
         if use_diffusion:
@@ -438,6 +452,8 @@ def build_app(args):
             query, history,
             qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens,
         )
+        print(f"  [Qwen AR] {qwen_result['latency_ms']:.1f}ms", flush=True)
+        print(f"    output: {qwen_result['prediction'][:150]}", flush=True)
 
         # Step 4: Speculative decoding reuses the draft from step 1
         spec_result = infer_speculative(
@@ -445,6 +461,10 @@ def build_app(args):
             sd_result["prediction"], sd_result["latency_ms"],
             qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens,
         )
+        print(f"  [Speculative] {spec_result['latency_ms']:.1f}ms | {spec_result['accept_status']} ({spec_result['accepted_tokens']}/{spec_result['draft_tokens']} tokens)", flush=True)
+        print(f"    draft : {spec_result['draft_text'][:150]}", flush=True)
+        print(f"    output: {spec_result['prediction'][:150]}", flush=True)
+        print("=" * 60, flush=True)
 
         sd_out = _format_output(sd_result, "Structured Drafter (BERT)")
         qwen_out = _format_output(qwen_result, "Qwen AR (自回归)")

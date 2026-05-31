@@ -1,0 +1,36 @@
+README.md
+  b94ed25e5702c261 279,288,299,309,318
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.22",
+  "base_commit_sha": "98dbb87ca5a14465479496aac4a199c3b7644e39",
+  "prompts": {
+    "7166589d2399bc43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74e5f4b8-7202-4784-bb6c-6d08cc5f51fd",
+        "model": "claude-sonnet-4.6"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    },
+    "b94ed25e5702c261": {
+      "agent_id": {
+        "tool": "github-copilot",
+        "id": "157e200a-46bf-4227-8f4a-f241a0e0bb88",
+        "model": "copilot/claude-opus-4.6"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 5,
+      "total_deletions": 0,
+      "accepted_lines": 5,
+      "overriden_lines": 0
+    }
+  }
+}

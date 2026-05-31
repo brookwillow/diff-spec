@@ -9,7 +9,7 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.diffusion_drafter import MaskedDrafterConfig, build_prediction_inputs, trim_decoded_prediction
+from src.diffusion_drafter import MaskedDrafterConfig, build_prediction_inputs, restore_tool_case, trim_decoded_prediction
 from src.evaluation import Evaluator, load_jsonl, load_tool_schemas
 from src.prepare_diffusion_data import render_diffusion_prompt
 
@@ -74,6 +74,7 @@ def write_predictions(args: argparse.Namespace) -> None:
     if args.limit is not None:
         rows = rows[: args.limit]
     system_prompt = Path(args.system).read_text(encoding="utf-8")
+    schemas = load_tool_schemas(args.tools)
     config = load_drafter_config(args.model, args.max_target_tokens)
     model, tokenizer = load_model_and_tokenizer(args.model)
 
@@ -86,6 +87,7 @@ def write_predictions(args: argparse.Namespace) -> None:
                 messages = [{"role": "user", "content": str(row.get("query", ""))}]
             prompt = render_diffusion_prompt(messages)
             prediction = predict_one(model, tokenizer, prompt, config)
+            prediction = restore_tool_case(prediction, schemas)
             handle.write(
                 json.dumps({"id": row.get("id"), "prediction": prediction}, ensure_ascii=False, separators=(",", ":"))
                 + "\n"

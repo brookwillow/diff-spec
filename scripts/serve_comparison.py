@@ -207,10 +207,10 @@ def _build_messages(query: str, history: list[list[str]]) -> list[dict[str, str]
     return messages
 
 
-def infer_diffusion(query: str, history: list[list[str]], model, tokenizer, config) -> dict[str, Any]:
+def infer_diffusion(query: str, history: list[list[str]], model, tokenizer, config, schemas) -> dict[str, Any]:
     """Run diffusion drafter inference."""
     import torch
-    from src.diffusion_drafter import build_prediction_inputs, trim_decoded_prediction
+    from src.diffusion_drafter import build_prediction_inputs, restore_tool_case, trim_decoded_prediction
     from src.prepare_diffusion_data import render_diffusion_prompt
 
     messages = _build_messages(query, history)
@@ -228,6 +228,7 @@ def infer_diffusion(query: str, history: list[list[str]], model, tokenizer, conf
     predicted_ids = logits[mask_positions].argmax(dim=-1).detach().cpu().tolist()
     text = tokenizer.decode(predicted_ids, skip_special_tokens=False)
     prediction = trim_decoded_prediction(text)
+    prediction = restore_tool_case(prediction, schemas)
     elapsed_ms = (time.perf_counter() - t0) * 1000
 
     return {
@@ -429,7 +430,7 @@ def build_app(args):
         if use_diffusion:
             diff_result = infer_diffusion(
                 query, history,
-                diff_model, diff_tokenizer, diff_config,
+                diff_model, diff_tokenizer, diff_config, schemas,
             )
 
         # Step 3: Run Qwen AR sequentially (no GPU contention)

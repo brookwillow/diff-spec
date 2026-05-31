@@ -147,9 +147,9 @@ def predict_structured(row, sd_model, sd_tokenizer, sd_space, schemas, max_lengt
     return prediction, elapsed
 
 
-def predict_diffusion(row, diff_model, diff_tokenizer, diff_config):
+def predict_diffusion(row, diff_model, diff_tokenizer, diff_config, schemas):
     import torch
-    from src.diffusion_drafter import build_prediction_inputs, trim_decoded_prediction
+    from src.diffusion_drafter import build_prediction_inputs, restore_tool_case, trim_decoded_prediction
     from src.prepare_diffusion_data import render_diffusion_prompt
 
     messages = row.get("messages", [{"role": "user", "content": row.get("query", "")}])
@@ -167,6 +167,7 @@ def predict_diffusion(row, diff_model, diff_tokenizer, diff_config):
     predicted_ids = logits[mask_positions].argmax(dim=-1).detach().cpu().tolist()
     text = diff_tokenizer.decode(predicted_ids, skip_special_tokens=False)
     prediction = trim_decoded_prediction(text)
+    prediction = restore_tool_case(prediction, schemas)
     elapsed = (time.perf_counter() - t0) * 1000
     return prediction, elapsed
 

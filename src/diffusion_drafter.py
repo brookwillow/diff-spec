@@ -101,8 +101,27 @@ def build_prediction_inputs(
 
 def trim_decoded_prediction(text: str) -> str:
     cleaned = text.strip()
-    for marker in ("[SEP]", "[PAD]", "Assistant:", "User:", "System:"):
+    for marker in ("[SEP]", "[PAD]", "[UNK]", "Assistant:", "User:", "System:"):
         index = cleaned.find(marker)
         if index >= 0:
             cleaned = cleaned[:index].strip()
+    # BERT tokenizer inserts spaces between tokens on decode.
+    # Our targets are compact JSON without spaces, so remove them.
+    cleaned = cleaned.replace(" ", "")
     return cleaned
+
+
+def restore_tool_case(prediction: str, schemas: list[dict]) -> str:
+    """Restore PascalCase tool names that BERT's lowercase tokenizer destroyed.
+
+    Builds a lowercase→original mapping from tool schemas and replaces
+    occurrences in the prediction string.
+    """
+    case_map: dict[str, str] = {}
+    for tool in schemas:
+        name = tool.get("name") or tool.get("function", {}).get("name", "")
+        if name:
+            case_map[name.lower()] = name
+    for lower, original in sorted(case_map.items(), key=lambda x: -len(x[0])):
+        prediction = prediction.replace(lower, original)
+    return prediction

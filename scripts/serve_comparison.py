@@ -26,6 +26,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--structured-model", default="outputs/structured_drafter")
     parser.add_argument("--structured-base", default="hfl/chinese-macbert-base")
     parser.add_argument("--structured-max-length", type=int, default=512)
+    # Diffusion drafter args
+    parser.add_argument("--diffusion-model", default="outputs/diffusion_drafter")
+    parser.add_argument("--no-diffusion", action="store_true", help="Skip diffusion drafter.")
     # Qwen AR model args
     parser.add_argument("--qwen-model", default="Qwen/Qwen2.5-1.5B-Instruct")
     parser.add_argument("--qwen-adapter", default=None)
@@ -67,6 +70,27 @@ def load_structured_drafter(args):
         model = model.to("cuda")
     model.eval()
     return model, tokenizer, space
+
+
+def load_diffusion_drafter(args):
+    import json as json_mod
+    import torch
+    from transformers import AutoModelForMaskedLM, AutoTokenizer
+    from src.diffusion_drafter import MaskedDrafterConfig
+
+    model_dir = Path(args.diffusion_model)
+    tokenizer = AutoTokenizer.from_pretrained(str(model_dir), trust_remote_code=True)
+    model = AutoModelForMaskedLM.from_pretrained(str(model_dir), trust_remote_code=True)
+    config_path = model_dir / "drafter_config.json"
+    if config_path.exists():
+        payload = json_mod.loads(config_path.read_text(encoding="utf-8"))
+        config = MaskedDrafterConfig(**payload)
+    else:
+        config = MaskedDrafterConfig()
+    if torch.cuda.is_available():
+        model = model.to("cuda")
+    model.eval()
+    return model, tokenizer, config
 
 
 def load_qwen_model(args):
@@ -181,6 +205,35 @@ def _build_messages(query: str, history: list[list[str]]) -> list[dict[str, str]
         messages.append({"role": "assistant", "content": assistant_msg})
     messages.append({"role": "user", "content": query})
     return messages
+
+
+def infer_diffusion(query: str, history: list[list[str]], model, tokenizer, config) -> dict[str, Any]:
+    """Run diffusion drafter inference."""
+    import torch
+    from src.diffusion_drafter import build_prediction_inputs, trim_decoded_prediction
+    from src.prepare_diffusion_data import render_diffusion_prompt
+
+    messages = _build_messages(query, history)
+    prompt = render_diffusion_prompt(messages)
+
+    t0 = time.perf_counter()
+    encoded = build_prediction_inputs(tokenizer, prompt, config)
+    device = next(model.parameters()).device
+    input_ids = torch.tensor([encoded["input_ids"]], dtype=torch.long, device=device)
+    attention_mask = torch.tensor([encoded["attention_mask"]], dtype=torch.long, device=device)
+    mask_positions = encoded["mask_positions"]
+
+    with torch.no_grad():
+        logits = model(input_ids=input_ids, attention_mask=attention_mask).logits[0]
+    predicted_ids = logits[mask_positions].argmax(dim=-1).detach().cpu().tolist()
+    text = tokenizer.decode(predicted_ids, skip_special_tokens=False)
+    prediction = trim_decoded_prediction(text)
+    elapsed_ms = (time.perf_counter() - t0) * 1000
+
+    return {
+        "prediction": prediction,
+        "latency_ms": round(elapsed_ms, 1),
+    }
 
 
 def infer_speculative(
@@ -350,6 +403,13 @@ def build_app(args):
     print("Loading structured drafter...")
     sd_model, sd_tokenizer, sd_space = load_structured_drafter(args)
 
+    use_diffusion = not args.no_diffusion
+    if use_diffusion:
+        print("Loading diffusion drafter...")
+        diff_model, diff_tokenizer, diff_config = load_diffusion_drafter(args)
+    else:
+        diff_model = diff_tokenizer = diff_config = None
+
     print("Loading Qwen model...")
     qwen_model, qwen_tokenizer = load_qwen_model(args)
 
@@ -357,7 +417,7 @@ def build_app(args):
 
     def predict(query: str, history: list[list[str]]):
         if not query.strip():
-            return "", "", ""
+            return ("", "", "", "") if use_diffusion else ("", "", "")
 
         # Step 1: Run structured drafter (fast, ~15ms)
         sd_result = infer_structured(
@@ -365,13 +425,20 @@ def build_app(args):
             sd_model, sd_tokenizer, sd_space, schemas, args.structured_max_length,
         )
 
-        # Step 2: Run Qwen AR and speculative decoding sequentially (no GPU contention)
+        # Step 2: Run diffusion drafter if available
+        if use_diffusion:
+            diff_result = infer_diffusion(
+                query, history,
+                diff_model, diff_tokenizer, diff_config,
+            )
+
+        # Step 3: Run Qwen AR sequentially (no GPU contention)
         qwen_result = infer_qwen(
             query, history,
             qwen_model, qwen_tokenizer, system_prompt, args.qwen_max_new_tokens,
         )
 
-        # Step 3: Speculative decoding reuses the draft from step 1
+        # Step 4: Speculative decoding reuses the draft from step 1
         spec_result = infer_speculative(
             query, history,
             sd_result["prediction"], sd_result["latency_ms"],
@@ -381,11 +448,18 @@ def build_app(args):
         sd_out = _format_output(sd_result, "Structured Drafter (BERT)")
         qwen_out = _format_output(qwen_result, "Qwen AR (自回归)")
         spec_out = _format_output(spec_result, "Speculative Decoding (BERT→Qwen)")
+        if use_diffusion:
+            diff_out = _format_output(diff_result, "Diffusion Drafter (BERT)")
+            return sd_out, diff_out, qwen_out, spec_out
         return sd_out, qwen_out, spec_out
 
     with gr.Blocks(title="Automotive Tool-Call Comparison") as app:
-        gr.Markdown("# 🚗 三模式对比: Structured Drafter / Qwen AR / Speculative Decoding")
-        gr.Markdown("输入车载指令，对比三种推理模式的预测结果和延迟。")
+        if use_diffusion:
+            gr.Markdown("# 🚗 四模式对比: Structured / Diffusion / Qwen AR / Speculative")
+            gr.Markdown("输入车载指令，对比四种推理模式的预测结果和延迟。")
+        else:
+            gr.Markdown("# 🚗 三模式对比: Structured Drafter / Qwen AR / Speculative Decoding")
+            gr.Markdown("输入车载指令，对比三种推理模式的预测结果和延迟。")
 
         with gr.Row():
             with gr.Column(scale=2):
@@ -399,36 +473,67 @@ def build_app(args):
                     submit_btn = gr.Button("发送", variant="primary")
                     clear_btn = gr.Button("清空历史")
 
-        with gr.Row():
-            sd_output = gr.Markdown(label="Structured Drafter")
-            qwen_output = gr.Markdown(label="Qwen AR")
-            spec_output = gr.Markdown(label="Speculative Decoding")
+        if use_diffusion:
+            with gr.Row():
+                sd_output = gr.Markdown(label="Structured Drafter")
+                diff_output = gr.Markdown(label="Diffusion Drafter")
+                qwen_output = gr.Markdown(label="Qwen AR")
+                spec_output = gr.Markdown(label="Speculative Decoding")
+        else:
+            with gr.Row():
+                sd_output = gr.Markdown(label="Structured Drafter")
+                qwen_output = gr.Markdown(label="Qwen AR")
+                spec_output = gr.Markdown(label="Speculative Decoding")
 
         with gr.Accordion("对话历史 (多轮)", open=False):
             history_display = gr.JSON(label="History")
 
-        def on_submit(query, history):
-            sd_out, qwen_out, spec_out = predict(query, history)
-            new_history = history + [[query, ""]]
-            return sd_out, qwen_out, spec_out, new_history, new_history, ""
+        if use_diffusion:
+            def on_submit(query, history):
+                sd_out, diff_out, qwen_out, spec_out = predict(query, history)
+                new_history = history + [[query, ""]]
+                return sd_out, diff_out, qwen_out, spec_out, new_history, new_history, ""
 
-        def on_clear():
-            return "", "", "", [], [], ""
+            def on_clear():
+                return "", "", "", "", [], [], ""
 
-        submit_btn.click(
-            on_submit,
-            inputs=[query_input, chatbot_history],
-            outputs=[sd_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
-        )
-        query_input.submit(
-            on_submit,
-            inputs=[query_input, chatbot_history],
-            outputs=[sd_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
-        )
-        clear_btn.click(
-            on_clear,
-            outputs=[sd_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
-        )
+            submit_btn.click(
+                on_submit,
+                inputs=[query_input, chatbot_history],
+                outputs=[sd_output, diff_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+            )
+            query_input.submit(
+                on_submit,
+                inputs=[query_input, chatbot_history],
+                outputs=[sd_output, diff_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+            )
+            clear_btn.click(
+                on_clear,
+                outputs=[sd_output, diff_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+            )
+        else:
+            def on_submit(query, history):
+                sd_out, qwen_out, spec_out = predict(query, history)
+                new_history = history + [[query, ""]]
+                return sd_out, qwen_out, spec_out, new_history, new_history, ""
+
+            def on_clear():
+                return "", "", "", [], [], ""
+
+            submit_btn.click(
+                on_submit,
+                inputs=[query_input, chatbot_history],
+                outputs=[sd_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+            )
+            query_input.submit(
+                on_submit,
+                inputs=[query_input, chatbot_history],
+                outputs=[sd_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+            )
+            clear_btn.click(
+                on_clear,
+                outputs=[sd_output, qwen_output, spec_output, chatbot_history, history_display, query_input],
+            )
 
     return app
 

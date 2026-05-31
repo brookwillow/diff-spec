@@ -1,0 +1,36 @@
+scripts/serve_comparison.py
+  f4655b44de69879e 427,458,464,467-478,483,486-487,492-493,514,516-517,529,531,534,539,544,548
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.2.22",
+  "base_commit_sha": "b7aaabf9ffaeb93c6612ecc3a5be7b3343aefb4b",
+  "prompts": {
+    "7166589d2399bc43": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "74e5f4b8-7202-4784-bb6c-6d08cc5f51fd",
+        "model": "claude-sonnet-4.6"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    },
+    "f4655b44de69879e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d63617f-499f-4db0-93d0-74b5968b6fa9",
+        "model": "deepseek-v4-pro"
+      },
+      "human_author": "wangj77",
+      "messages": [],
+      "total_additions": 29,
+      "total_deletions": 14,
+      "accepted_lines": 29,
+      "overriden_lines": 0
+    }
+  }
+}

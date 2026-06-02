@@ -20,6 +20,25 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+def _sync_accelerator(torch_module) -> None:
+    if torch_module.cuda.is_available():
+        torch_module.cuda.synchronize()
+        return
+    mps = getattr(torch_module, "mps", None)
+    if mps is not None and mps.is_available() and hasattr(mps, "synchronize"):
+        mps.synchronize()
+
+
+def _start_timer(torch_module) -> float:
+    _sync_accelerator(torch_module)
+    return time.perf_counter()
+
+
+def _elapsed_ms(torch_module, start: float) -> float:
+    _sync_accelerator(torch_module)
+    return (time.perf_counter() - start) * 1000
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Dual-model comparison server.")
     # Structured drafter args
@@ -128,13 +147,13 @@ def infer_structured(query: str, history: list[list[str]], model, tokenizer, spa
     messages = _build_messages(query, history)
     prompt = render_structured_prompt(messages)
 
-    t0 = time.perf_counter()
+    t0 = _start_timer(torch)
     encoded = tokenizer(prompt, truncation=True, max_length=max_length, padding="max_length", return_tensors="pt")
     device = next(model.parameters()).device
     encoded = {k: v.to(device) for k, v in encoded.items()}
     with torch.no_grad():
         output = model(**encoded)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
+    elapsed_ms = _elapsed_ms(torch, t0)
 
     logits = output["logits"] if isinstance(output, dict) else output.logits
     example = select_ids_from_logits(logits)
@@ -165,7 +184,7 @@ def infer_qwen(query: str, history: list[list[str]], model, tokenizer, system_pr
         messages.append({"role": "assistant", "content": assistant_msg})
     messages.append({"role": "user", "content": query})
 
-    t0 = time.perf_counter()
+    t0 = _start_timer(torch)
     encoded = tokenizer.apply_chat_template(messages, tokenize=True, add_generation_prompt=True, return_tensors="pt")
     if isinstance(encoded, Mapping):
         input_ids = encoded["input_ids"]
@@ -188,7 +207,7 @@ def infer_qwen(query: str, history: list[list[str]], model, tokenizer, system_pr
             pad_token_id=tokenizer.eos_token_id,
             eos_token_id=tokenizer.eos_token_id,
         )
-    elapsed_ms = (time.perf_counter() - t0) * 1000
+    elapsed_ms = _elapsed_ms(torch, t0)
     generated = output_ids[0, input_ids.shape[-1]:]
     prediction = tokenizer.decode(generated, skip_special_tokens=True).strip()
 
@@ -216,7 +235,7 @@ def infer_diffusion(query: str, history: list[list[str]], model, tokenizer, conf
     messages = _build_messages(query, history)
     prompt = render_diffusion_prompt(messages)
 
-    t0 = time.perf_counter()
+    t0 = _start_timer(torch)
     encoded = build_prediction_inputs(tokenizer, prompt, config)
     device = next(model.parameters()).device
     input_ids = torch.tensor([encoded["input_ids"]], dtype=torch.long, device=device)
@@ -229,7 +248,7 @@ def infer_diffusion(query: str, history: list[list[str]], model, tokenizer, conf
     raw_text = tokenizer.decode(predicted_ids, skip_special_tokens=False)
     trimmed = trim_decoded_prediction(raw_text)
     prediction = restore_tool_case(trimmed, schemas)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
+    elapsed_ms = _elapsed_ms(torch, t0)
 
     print(f"  [Diffusion] {elapsed_ms:.1f}ms", flush=True)
     print(f"    raw decode : {raw_text[:200]}", flush=True)
@@ -257,9 +276,10 @@ def infer_speculative(
     import torch
     from collections.abc import Mapping
 
-    t0 = time.perf_counter()
+    total_start = _start_timer(torch)
 
     # Step 1: Build Qwen prompt
+    prep_start = _start_timer(torch)
     qwen_messages = [{"role": "system", "content": system_prompt}]
     for user_msg, assistant_msg in history:
         qwen_messages.append({"role": "user", "content": user_msg})
@@ -283,17 +303,19 @@ def infer_speculative(
 
     draft_tensor = torch.tensor([draft_token_ids], device=qwen_model.device)
     input_with_draft = torch.cat([prompt_ids, draft_tensor], dim=1)
+    prep_time_ms = _elapsed_ms(torch, prep_start)
 
     # Step 3: Single Qwen forward pass to verify all draft tokens
-    t_verify = time.perf_counter()
+    t_verify = _start_timer(torch)
     with torch.no_grad():
         outputs = qwen_model(input_ids=input_with_draft)
     verify_logits = outputs.logits  # [1, seq_len, vocab_size]
-    verify_time_ms = (time.perf_counter() - t_verify) * 1000
+    verify_time_ms = _elapsed_ms(torch, t_verify)
 
     # Step 5: Compare Qwen's predictions with draft tokens
     # At position i, the model predicts token i+1
     # So logits at positions [prompt_len-1 ... prompt_len+len(draft)-2] predict draft tokens
+    accept_check_start = _start_timer(torch)
     accepted_tokens = 0
     n_draft = len(draft_token_ids)
     for i in range(n_draft):
@@ -303,8 +325,11 @@ def infer_speculative(
             accepted_tokens += 1
         else:
             break
+    accept_check_ms = _elapsed_ms(torch, accept_check_start)
 
     # Step 6: Build final output
+    continuation_ms = 0.0
+    decode_ms = 0.0
     if accepted_tokens == n_draft and n_draft > 0:
         # Draft fully accepted!
         final_prediction = draft_text
@@ -323,6 +348,7 @@ def infer_speculative(
         # Generate remaining tokens
         remaining_budget = max_new_tokens - accepted_tokens - (1 if accepted_tokens < n_draft else 0)
         if remaining_budget > 0:
+            gen_start = _start_timer(torch)
             with torch.no_grad():
                 attention_mask = torch.ones_like(continuation_start)
                 gen_output = qwen_model.generate(
@@ -333,13 +359,18 @@ def infer_speculative(
                     pad_token_id=qwen_tokenizer.eos_token_id,
                     eos_token_id=qwen_tokenizer.eos_token_id,
                 )
+            continuation_ms = _elapsed_ms(torch, gen_start)
             all_generated = gen_output[0, prompt_len:]
         else:
             all_generated = continuation_start[0, prompt_len:]
+            continuation_ms = 0.0
+        decode_start = _start_timer(torch)
         final_prediction = qwen_tokenizer.decode(all_generated, skip_special_tokens=True).strip()
+        decode_ms = _elapsed_ms(torch, decode_start)
         accept_status = "partial" if n_draft > 0 else "empty_draft"
     else:
         # No tokens accepted — Qwen disagrees from the start, generate fully
+        gen_start = _start_timer(torch)
         with torch.no_grad():
             attention_mask = torch.ones_like(prompt_ids)
             gen_output = qwen_model.generate(
@@ -350,18 +381,32 @@ def infer_speculative(
                 pad_token_id=qwen_tokenizer.eos_token_id,
                 eos_token_id=qwen_tokenizer.eos_token_id,
             )
+        continuation_ms = _elapsed_ms(torch, gen_start)
         generated = gen_output[0, prompt_len:]
+        decode_start = _start_timer(torch)
         final_prediction = qwen_tokenizer.decode(generated, skip_special_tokens=True).strip()
+        decode_ms = _elapsed_ms(torch, decode_start)
         accept_status = "rejected"
 
-    total_ms = (time.perf_counter() - t0) * 1000 + draft_ms
+    verifier_total_ms = _elapsed_ms(torch, total_start)
+    total_ms = draft_ms + verifier_total_ms
+    other_ms = max(
+        total_ms - draft_ms - prep_time_ms - verify_time_ms - accept_check_ms - continuation_ms - decode_ms,
+        0.0,
+    )
 
     return {
         "prediction": final_prediction,
         "latency_ms": round(total_ms, 1),
         "draft_text": draft_text,
         "draft_ms": round(draft_ms, 1),
+        "prep_ms": round(prep_time_ms, 1),
         "verify_ms": round(verify_time_ms, 1),
+        "accept_check_ms": round(accept_check_ms, 1),
+        "continuation_ms": round(continuation_ms, 1),
+        "decode_ms": round(max(decode_ms, 0.0), 1),
+        "other_ms": round(other_ms, 1),
+        "verifier_total_ms": round(verifier_total_ms, 1),
         "accepted_tokens": accepted_tokens,
         "draft_tokens": n_draft,
         "accept_status": accept_status,
@@ -384,7 +429,16 @@ def _format_output(result: dict[str, Any], label: str) -> str:
         status_emoji = {"fully_accepted": "✅", "partial": "⚠️", "rejected": "❌", "empty_draft": "⏭️"}
         emoji = status_emoji.get(result["accept_status"], "")
         lines.append(f"\n{emoji} **{result['accept_status']}** — accepted {result['accepted_tokens']}/{result['draft_tokens']} tokens")
-        lines.append(f"  Draft: {result['draft_ms']:.1f}ms | Verify: {result['verify_ms']:.1f}ms")
+        lines.append(
+            "  "
+            f"Draft: {result['draft_ms']:.1f}ms | "
+            f"Prep: {result.get('prep_ms', 0.0):.1f}ms | "
+            f"Verify forward: {result['verify_ms']:.1f}ms | "
+            f"Accept check: {result.get('accept_check_ms', 0.0):.1f}ms | "
+            f"Continue gen: {result.get('continuation_ms', 0.0):.1f}ms | "
+            f"Decode: {result.get('decode_ms', 0.0):.1f}ms | "
+            f"Other: {result.get('other_ms', 0.0):.1f}ms"
+        )
         if result.get("draft_text"):
             try:
                 draft_parsed = json.loads(result["draft_text"])

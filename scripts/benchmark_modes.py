@@ -33,6 +33,25 @@ from src.structured_drafter import (
 )
 
 
+def _sync_accelerator(torch_module) -> None:
+    if torch_module.cuda.is_available():
+        torch_module.cuda.synchronize()
+        return
+    mps = getattr(torch_module, "mps", None)
+    if mps is not None and mps.is_available() and hasattr(mps, "synchronize"):
+        mps.synchronize()
+
+
+def _start_timer(torch_module) -> float:
+    _sync_accelerator(torch_module)
+    return time.perf_counter()
+
+
+def _elapsed_ms(torch_module, start: float) -> float:
+    _sync_accelerator(torch_module)
+    return (time.perf_counter() - start) * 1000
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Benchmark 3 inference modes.")
     parser.add_argument("--structured-model", default="outputs/structured_drafter")
@@ -134,7 +153,7 @@ def predict_structured(row, sd_model, sd_tokenizer, sd_space, schemas, max_lengt
     messages = row.get("messages", [{"role": "user", "content": row.get("query", "")}])
     prompt = render_structured_prompt(messages)
 
-    t0 = time.perf_counter()
+    t0 = _start_timer(torch)
     encoded = sd_tokenizer(prompt, truncation=True, max_length=max_length, padding="max_length", return_tensors="pt")
     device = next(sd_model.parameters()).device
     encoded = {k: v.to(device) for k, v in encoded.items()}
@@ -143,7 +162,7 @@ def predict_structured(row, sd_model, sd_tokenizer, sd_space, schemas, max_lengt
     logits = output["logits"] if isinstance(output, dict) else output.logits
     example = select_ids_from_logits(logits)
     prediction = render_prediction(example, sd_space, schemas)
-    elapsed = (time.perf_counter() - t0) * 1000
+    elapsed = _elapsed_ms(torch, t0)
     return prediction, elapsed
 
 
@@ -155,7 +174,7 @@ def predict_diffusion(row, diff_model, diff_tokenizer, diff_config, schemas):
     messages = row.get("messages", [{"role": "user", "content": row.get("query", "")}])
     prompt = render_diffusion_prompt(messages)
 
-    t0 = time.perf_counter()
+    t0 = _start_timer(torch)
     encoded = build_prediction_inputs(diff_tokenizer, prompt, diff_config)
     device = next(diff_model.parameters()).device
     input_ids = torch.tensor([encoded["input_ids"]], dtype=torch.long, device=device)
@@ -168,7 +187,7 @@ def predict_diffusion(row, diff_model, diff_tokenizer, diff_config, schemas):
     text = diff_tokenizer.decode(predicted_ids, skip_special_tokens=False)
     prediction = trim_decoded_prediction(text)
     prediction = restore_tool_case(prediction, schemas)
-    elapsed = (time.perf_counter() - t0) * 1000
+    elapsed = _elapsed_ms(torch, t0)
     return prediction, elapsed
 
 
@@ -184,7 +203,7 @@ def predict_qwen(row, qwen_model, qwen_tokenizer, system_prompt, max_new_tokens)
     else:
         prompt_msgs.insert(0, {"role": "system", "content": system_prompt})
 
-    t0 = time.perf_counter()
+    t0 = _start_timer(torch)
     encoded = qwen_tokenizer.apply_chat_template(prompt_msgs, tokenize=True, add_generation_prompt=True, return_tensors="pt")
     if isinstance(encoded, Mapping):
         input_ids = encoded["input_ids"]
@@ -203,7 +222,7 @@ def predict_qwen(row, qwen_model, qwen_tokenizer, system_prompt, max_new_tokens)
         )
     generated = output_ids[0, input_ids.shape[1]:]
     prediction = qwen_tokenizer.decode(generated, skip_special_tokens=True).strip()
-    elapsed = (time.perf_counter() - t0) * 1000
+    elapsed = _elapsed_ms(torch, t0)
     return prediction, elapsed
 
 
@@ -215,7 +234,7 @@ def predict_speculative(row, sd_model, sd_tokenizer, sd_space, schemas, sd_max_l
     messages = row.get("messages", [{"role": "user", "content": row.get("query", "")}])
     prompt = render_structured_prompt(messages)
 
-    t0 = time.perf_counter()
+    t0 = _start_timer(torch)
     encoded = sd_tokenizer(prompt, truncation=True, max_length=sd_max_length, padding="max_length", return_tensors="pt")
     device_sd = next(sd_model.parameters()).device
     encoded = {k: v.to(device_sd) for k, v in encoded.items()}
@@ -224,9 +243,11 @@ def predict_speculative(row, sd_model, sd_tokenizer, sd_space, schemas, sd_max_l
     logits = sd_output["logits"] if isinstance(sd_output, dict) else sd_output.logits
     example = select_ids_from_logits(logits)
     draft_text = render_prediction(example, sd_space, schemas)
-    draft_ms = (time.perf_counter() - t0) * 1000
+    draft_ms = _elapsed_ms(torch, t0)
 
     # Verify phase: build Qwen prompt
+    verifier_start = _start_timer(torch)
+    prep_start = _start_timer(torch)
     prompt_msgs = [m for m in messages if isinstance(m, dict)]
     if prompt_msgs and prompt_msgs[-1].get("role") == "assistant":
         prompt_msgs = prompt_msgs[:-1]
@@ -249,14 +270,16 @@ def predict_speculative(row, sd_model, sd_tokenizer, sd_space, schemas, sd_max_l
 
     draft_tensor = torch.tensor([draft_token_ids], device=qwen_model.device)
     input_with_draft = torch.cat([prompt_ids, draft_tensor], dim=1)
+    prep_ms = _elapsed_ms(torch, prep_start)
 
-    t_verify = time.perf_counter()
+    t_verify = _start_timer(torch)
     with torch.no_grad():
         outputs = qwen_model(input_ids=input_with_draft)
     verify_logits = outputs.logits
-    verify_ms = (time.perf_counter() - t_verify) * 1000
+    verify_ms = _elapsed_ms(torch, t_verify)
 
     # Token-by-token comparison
+    accept_check_start = _start_timer(torch)
     accepted_tokens = 0
     n_draft = len(draft_token_ids)
     for i in range(n_draft):
@@ -266,8 +289,11 @@ def predict_speculative(row, sd_model, sd_tokenizer, sd_space, schemas, sd_max_l
             accepted_tokens += 1
         else:
             break
+    accept_check_ms = _elapsed_ms(torch, accept_check_start)
 
     # Build final output
+    continuation_ms = 0.0
+    decode_ms = 0.0
     if accepted_tokens == n_draft and n_draft > 0:
         final_prediction = draft_text
         accept_status = "fully_accepted"
@@ -280,6 +306,7 @@ def predict_speculative(row, sd_model, sd_tokenizer, sd_space, schemas, sd_max_l
             continuation_start = torch.cat([prompt_ids, torch.tensor([accepted_ids], device=qwen_model.device)], dim=1)
         remaining_budget = max_new_tokens - accepted_tokens - (1 if accepted_tokens < n_draft else 0)
         if remaining_budget > 0:
+            gen_start = _start_timer(torch)
             with torch.no_grad():
                 attention_mask = torch.ones_like(continuation_start)
                 gen_output = qwen_model.generate(
@@ -290,12 +317,16 @@ def predict_speculative(row, sd_model, sd_tokenizer, sd_space, schemas, sd_max_l
                     pad_token_id=qwen_tokenizer.eos_token_id,
                     eos_token_id=qwen_tokenizer.eos_token_id,
                 )
+            continuation_ms = _elapsed_ms(torch, gen_start)
             all_generated = gen_output[0, prompt_len:]
         else:
             all_generated = continuation_start[0, prompt_len:]
+        decode_start = _start_timer(torch)
         final_prediction = qwen_tokenizer.decode(all_generated, skip_special_tokens=True).strip()
+        decode_ms = _elapsed_ms(torch, decode_start)
         accept_status = "partial"
     else:
+        gen_start = _start_timer(torch)
         with torch.no_grad():
             attention_mask = torch.ones_like(prompt_ids)
             gen_output = qwen_model.generate(
@@ -306,14 +337,28 @@ def predict_speculative(row, sd_model, sd_tokenizer, sd_space, schemas, sd_max_l
                 pad_token_id=qwen_tokenizer.eos_token_id,
                 eos_token_id=qwen_tokenizer.eos_token_id,
             )
+        continuation_ms = _elapsed_ms(torch, gen_start)
         generated = gen_output[0, prompt_len:]
+        decode_start = _start_timer(torch)
         final_prediction = qwen_tokenizer.decode(generated, skip_special_tokens=True).strip()
+        decode_ms = _elapsed_ms(torch, decode_start)
         accept_status = "rejected"
 
-    total_ms = (time.perf_counter() - t0) * 1000
+    verifier_total_ms = _elapsed_ms(torch, verifier_start)
+    total_ms = draft_ms + verifier_total_ms
+    other_ms = max(
+        total_ms - draft_ms - prep_ms - verify_ms - accept_check_ms - continuation_ms - decode_ms,
+        0.0,
+    )
     return final_prediction, total_ms, {
         "draft_ms": draft_ms,
+        "prep_ms": prep_ms,
         "verify_ms": verify_ms,
+        "accept_check_ms": accept_check_ms,
+        "continuation_ms": continuation_ms,
+        "decode_ms": decode_ms,
+        "other_ms": other_ms,
+        "verifier_total_ms": verifier_total_ms,
         "accepted_tokens": accepted_tokens,
         "draft_tokens": n_draft,
         "accept_status": accept_status,
@@ -462,6 +507,16 @@ def main() -> int:
                     "schema_valid_rate": results["speculative"]["schema_valid_rate"],
                 },
                 "latency": latency_stats(spec_times),
+                "phase_latency": {
+                    "draft": latency_stats([d["draft_ms"] for d in spec_details]),
+                    "prep": latency_stats([d["prep_ms"] for d in spec_details]),
+                    "verify_forward": latency_stats([d["verify_ms"] for d in spec_details]),
+                    "accept_check": latency_stats([d["accept_check_ms"] for d in spec_details]),
+                    "continuation_generate": latency_stats([d["continuation_ms"] for d in spec_details]),
+                    "decode": latency_stats([d["decode_ms"] for d in spec_details]),
+                    "other": latency_stats([d["other_ms"] for d in spec_details]),
+                    "verifier_total": latency_stats([d["verifier_total_ms"] for d in spec_details]),
+                },
                 "speculative_stats": {
                     "fully_accepted": fully_accepted,
                     "fully_accepted_rate": round(fully_accepted / total, 4) if total else 0,
